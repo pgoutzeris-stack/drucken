@@ -8,6 +8,7 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.8/dist/umd/supabase.js"></script>
 <script src="config.js"></script>
+<script src="relay.js?v=1"></script>
 <style>
 :root{
   --brand:#206efb; --brand-dark:#1a58c9; --ink:#0f172a; --muted:#475569;
@@ -181,8 +182,8 @@ th{font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;color:var(--mu
         </div>
         <h2>Warteschlangen auf diesem Mac</h2>
         <table id="queue-table"><thead><tr><th>Warteschlange</th><th>Status</th><th>Anschluss</th></tr></thead><tbody></tbody></table>
-        <h2 style="margin-top:22px">AirPrint im Netz</h2>
-        <table id="dev-table"><thead><tr><th>Gerät</th><th>Host</th><th>Kann</th><th>Webinterface</th></tr></thead><tbody></tbody></table>
+        <h2 style="margin-top:22px" id="dev-head">AirPrint im Netz</h2>
+        <table id="dev-table"><thead><tr><th>Gerät</th><th>Host</th><th>Kann</th><th>Status</th></tr></thead><tbody></tbody></table>
       </div>
     </section>
 
@@ -192,7 +193,7 @@ th{font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;color:var(--mu
         <div class="row" style="margin-bottom:12px">
           <button class="btn ghost sm" id="jobs-refresh"><i class="fa-solid fa-rotate"></i> Aktualisieren</button>
         </div>
-        <table id="jobs-table"><thead><tr><th>Auftrag</th><th>Nutzer</th><th>Größe</th></tr></thead><tbody></tbody></table>
+        <table id="jobs-table"><thead><tr><th>Auftrag</th><th>Nutzer</th><th>Inhalt</th><th>Status</th></tr></thead><tbody></tbody></table>
       </div>
     </section>
 
@@ -209,7 +210,18 @@ th{font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;color:var(--mu
     <section data-panel="connection" class="hidden">
       <h1>Verbindung</h1>
       <div class="card">
-        <h2>Helfer</h2>
+        <h2>Weg zum Gerät</h2>
+        <div class="grid2">
+          <div><label for="conn-mode">Verbindung</label><select id="conn-mode">
+            <option value="auto">Automatisch</option>
+            <option value="bridge">Nur lokaler Helfer</option>
+            <option value="relay">Nur Warteschlange</option>
+          </select></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Lokaler Helfer</h2>
         <div class="grid2">
           <div><label for="conn-url">Adresse</label><input id="conn-url" type="text" value="http://127.0.0.1:7331"></div>
           <div><label for="conn-token">Token</label><input id="conn-token" type="password" placeholder="aus ~/.roots-print/token"></div>
@@ -220,6 +232,19 @@ th{font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;color:var(--mu
         </div>
         <div id="conn-out" style="margin-top:14px"></div>
       </div>
+      <div class="card hidden" id="agent-admin">
+        <h2>Agent freischalten</h2>
+        <div class="grid2">
+          <div><label for="agent-name">Name</label><input id="agent-name" type="text" placeholder="Mac mini Büro"></div>
+          <div><label for="agent-hash">Token-Hash</label><input id="agent-hash" type="text" class="mono" placeholder="64 Hex-Zeichen"></div>
+        </div>
+        <div class="row" style="margin-top:16px">
+          <button class="btn" id="agent-add"><i class="fa-solid fa-plus"></i> Eintragen</button>
+        </div>
+        <div id="agent-out" style="margin-top:14px"></div>
+        <pre class="mono" style="background:#0f172a;color:#e2e8f0;padding:14px;border-radius:12px;overflow:auto;margin-top:14px">node bridge/roots-print-agent.js --hash</pre>
+      </div>
+
       <div class="card">
         <h2>Helfer starten</h2>
         <p style="font-size:.86rem;color:var(--muted);margin:0 0 10px">Der Browser kann AirPrint-Geräte nicht direkt ansprechen. Der Helfer läuft auf dem eigenen Mac, hört nur auf 127.0.0.1 und verlangt das Token.</p>
@@ -240,7 +265,7 @@ node bridge/roots-print-bridge.js</pre>
   </div>
 </div>
 
-<script src="app.js?v=2"></script>
+<script src="app.js?v=3"></script>
 <script src="https://pgoutzeris-stack.github.io/ROOTS_Intranet/roots-user-bridge.js"></script>
 </body>
 </html>

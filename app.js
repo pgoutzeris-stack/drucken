@@ -1,9 +1,14 @@
 /**
- * ROOTS Drucken – frontend.
+ * ROOTS Print – frontend.
  *
- * All device access goes through the local bridge (bridge/roots-print-bridge.js).
- * A page served over HTTPS cannot reach a printer on http://*.local directly, so
- * every printer/scanner call here is a call to 127.0.0.1 instead.
+ * Zwei Wege zum Gerät, gleiche Oberfläche:
+ *
+ *   bridge  Der lokale Helfer auf 127.0.0.1. Schnell, ohne Cloud, aber nur auf
+ *           dem eigenen Mac und nur in Browsern, die den Zugriff erlauben.
+ *   relay   Warteschlange in Supabase. Der Agent im Büro arbeitet sie ab. Läuft
+ *           überall — Safari, Mac-App, Handy, von zuhause.
+ *
+ * Der Helfer hat Vorrang, wenn er antwortet; sonst übernimmt der Relay.
  */
 (function () {
   "use strict";
@@ -11,34 +16,40 @@
   const CFG = window.ROOTS_PRINT_CONFIG;
   const LS_TOKEN = "roots-print-token";
   const LS_URL = "roots-print-url";
+  const LS_MODE = "roots-print-mode";
 
   const state = {
+    mode: localStorage.getItem(LS_MODE) || "auto",
+    active: null, // 'bridge' | 'relay'
     bridge: null,
+    bridgeIssue: null,
     token: localStorage.getItem(LS_TOKEN) || "",
     url: localStorage.getItem(LS_URL) || CFG.BRIDGE_ORIGINS[0],
     printers: [],
     devices: [],
     caps: null,
     scan: null,
+    scanPages: [],
     pollTimer: null,
+    profile: null,
   };
 
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const bytes = (n) => (n > 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB");
+  const relay = () => window.RootsPrintRelay;
 
   /* ------------------------------------------------------------- messages --- */
 
-  /** Bridge errors arrive as {code,message,hint}; network failures do not. */
   const NETWORK_HINTS = {
     offline: {
       message: "Der Helfer auf diesem Mac antwortet nicht.",
-      hint: "Terminal öffnen und <code>node bridge/roots-print-bridge.js</code> starten. Läuft er schon, unter „Verbindung“ Adresse und Token prüfen.",
+      hint: "Ohne Helfer läuft alles über die Warteschlange in Supabase. Direkt drucken: <code>node bridge/roots-print-bridge.js</code>.",
     },
     blocked: {
       message: "Der Browser blockiert den Zugriff auf 127.0.0.1.",
-      hint: "Safari erlaubt das von einer HTTPS-Seite nicht. Tool direkt über <code>http://127.0.0.1:7331</code> öffnen — der Helfer liefert dieselbe Oberfläche aus.",
+      hint: "Safari erlaubt das von einer HTTPS-Seite nicht. Das Tool nutzt deshalb die Warteschlange in Supabase.",
     },
   };
 
@@ -49,32 +60,24 @@
     el.innerHTML = `<div class="msg ${kind}"><i class="fa-solid ${icon}"></i><div><strong>${esc(message)}</strong>${hint ? `<span class="hint">${hint}</span>` : ""}</div></div>`;
   }
 
-  function clear(sel) {
+  const clear = (sel) => {
     const el = $(sel);
     if (el) el.innerHTML = "";
-  }
-
-  function showError(sel, e) {
-    msg(sel, "err", e.message || "Unbekannter Fehler", e.hint || null);
-  }
+  };
+  const showError = (sel, e) => msg(sel, "err", e.message || "Unbekannter Fehler", e.hint || null);
 
   /* --------------------------------------------------------------- bridge --- */
 
   async function call(path, { method = "GET", body, headers = {}, raw = false, timeout = 200000 } = {}) {
-    if (!state.token) throw { code: "no_token", message: "Es ist kein Token gesetzt.", hint: "Unter „Verbindung“ das Token aus <code>~/.roots-print/token</code> einsetzen." };
+    if (!state.token) throw { code: "no_token", message: "Es ist kein Token für den Helfer gesetzt.", hint: "Unter „Verbindung“ das Token aus <code>~/.roots-print/token</code> einsetzen." };
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeout);
     let res;
     try {
-      res = await fetch(state.url + path, {
-        method,
-        body,
-        signal: ctrl.signal,
-        headers: { Authorization: "Bearer " + state.token, ...headers },
-      });
+      res = await fetch(state.url + path, { method, body, signal: ctrl.signal, headers: { Authorization: "Bearer " + state.token, ...headers } });
     } catch (err) {
-      const kind = err.name === "AbortError" ? null : window.isSecureContext && location.protocol === "https:" ? "blocked" : "offline";
       if (err.name === "AbortError") throw { code: "timeout", message: "Der Helfer hat zu lange nicht geantwortet.", hint: "Gerät wach? Scan mit weniger Seiten oder niedrigerer Auflösung erneut versuchen." };
+      const kind = location.protocol === "https:" ? "blocked" : "offline";
       throw { code: kind, ...NETWORK_HINTS[kind] };
     } finally {
       clearTimeout(t);
@@ -93,9 +96,7 @@
     return data?.error || { code: "http_" + res.status, message: `HTTP ${res.status}` };
   }
 
-  /** `onlyGiven` keeps a manual entry under „Verbindung" from silently falling back. */
   async function detectBridge(onlyGiven) {
-    const pill = $("#bridge-pill");
     state.bridgeIssue = null;
     const candidates = onlyGiven ? [state.url] : [state.url, ...CFG.BRIDGE_ORIGINS.filter((u) => u !== state.url)];
     for (const url of candidates) {
@@ -108,61 +109,89 @@
         localStorage.setItem(LS_URL, url);
         if (!info.tokenValid) {
           state.bridgeIssue = "token";
-          pill.className = "pill warn";
-          pill.innerHTML = '<i class="fa-solid fa-key"></i> Token fehlt';
-          msg("#banner", "err", "Der Helfer läuft, akzeptiert das Token aber nicht.", 'Token aus <code>~/.roots-print/token</code> unter „Verbindung“ einsetzen.');
           return false;
         }
-        pill.className = "pill ok";
-        pill.innerHTML = `<i class="fa-solid fa-circle-check"></i> Helfer ${esc(info.version)}`;
-        clear("#banner");
         return true;
       } catch (e) {
-        /* try next candidate */
+        /* nächster Kandidat */
       }
     }
     state.bridge = null;
     state.bridgeIssue = "offline";
-    pill.className = "pill err";
-    pill.innerHTML = '<i class="fa-solid fa-circle-xmark"></i> Helfer offline';
-    const kind = location.protocol === "https:" ? "blocked" : "offline";
-    msg("#banner", "err", NETWORK_HINTS[kind].message, NETWORK_HINTS[kind].hint);
-    if (kind === "blocked") {
-      // Das Intranet lehnt roots-open-url für 127.0.0.1 ab, deshalb keine
-      // Schaltfläche, sondern die Adresse zum Kopieren.
-      $("#banner").insertAdjacentHTML(
-        "beforeend",
-        `<div class="row"><code class="mono">${esc(state.url)}/</code><button class="btn ghost sm" id="copy-local"><i class="fa-solid fa-copy"></i> Adresse kopieren</button></div>`
-      );
-      $("#copy-local").addEventListener("click", async () => {
-        try {
-          await navigator.clipboard.writeText(state.url + "/");
-          $("#copy-local").innerHTML = '<i class="fa-solid fa-check"></i> Kopiert';
-        } catch (e) {
-          $("#copy-local").innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> Adresse manuell eingeben';
-        }
-      });
-    }
     return false;
   }
 
-  /* -------------------------------------------------------------- printers --- */
+  function renderModePill() {
+    const pill = $("#bridge-pill");
+    if (state.active === "bridge") {
+      pill.className = "pill ok";
+      pill.innerHTML = `<i class="fa-solid fa-bolt"></i> Helfer ${esc(state.bridge?.version || "")}`;
+      return;
+    }
+    const online = state.printers.some((p) => p.agentOnline);
+    pill.className = "pill " + (online ? "ok" : "warn");
+    pill.innerHTML = `<i class="fa-solid fa-cloud"></i> Warteschlange${online ? "" : " · Agent offline"}`;
+  }
+
+  async function pickMode() {
+    if (state.mode === "relay") {
+      state.active = "relay";
+      return;
+    }
+    const ok = await detectBridge();
+    if (ok) {
+      state.active = "bridge";
+      clear("#banner");
+      return;
+    }
+    if (state.mode === "bridge") {
+      state.active = "bridge";
+      const kind = state.bridgeIssue === "token" ? null : location.protocol === "https:" ? "blocked" : "offline";
+      if (state.bridgeIssue === "token") msg("#banner", "err", "Der Helfer läuft, akzeptiert das Token aber nicht.", 'Token aus <code>~/.roots-print/token</code> unter „Verbindung“ einsetzen.');
+      else msg("#banner", "err", NETWORK_HINTS[kind].message, NETWORK_HINTS[kind].hint);
+      return;
+    }
+    state.active = "relay";
+  }
+
+  /* ------------------------------------------------------------- printers --- */
+
+  const OPTION_LABELS = { ColorModel: "Farbe", Duplex: "Beidseitig", PageSize: "Papierformat", InputSlot: "Papierquelle", MediaType: "Medium", Collate: "Sortieren", cupsPrintQuality: "Qualität", cupsFinishingTemplate: "Finishing" };
+  const VALUE_LABELS = { RGB: "Farbe", Gray: "Graustufen", Gray16: "Graustufen (16 bit)", None: "Aus", DuplexNoTumble: "Ein (lange Kante)", DuplexTumble: "Ein (kurze Kante)", True: "Ja", False: "Nein", auto: "Automatisch", "by-pass-tray": "Mehrzweckfach", "tray-1": "Kassette 1", none: "Keins" };
 
   async function loadPrinters() {
     try {
-      const data = await call("/api/printers");
-      state.printers = data.printers;
+      if (state.active === "bridge") {
+        const data = await call("/api/printers");
+        state.printers = data.printers.map((p) => ({ id: p.name, queue: p.name, display_name: p.name, state: p.state, state_text: p.stateText, is_default: p.isDefault, device: p.device, options: null, agentOnline: true }));
+      } else {
+        state.printers = (await relay().printers()).map((p) => ({ ...p, device: null }));
+      }
+      renderModePill();
       const sel = $("#print-queue");
-      sel.innerHTML = data.printers.map((p) => `<option value="${esc(p.name)}"${p.isDefault ? " selected" : ""}>${esc(p.name)}${p.isDefault ? " (Standard)" : ""}</option>`).join("");
-      if (!data.printers.length) {
-        msg("#print-result", "err", "macOS kennt auf diesem Mac keinen Drucker.", "Systemeinstellungen › Drucker & Scanner › Drucker hinzufügen. Danach hier neu laden.");
+      sel.innerHTML = state.printers
+        .map((p) => `<option value="${esc(p.id)}"${p.is_default ? " selected" : ""}>${esc(p.display_name || p.queue)}${p.is_default ? " (Standard)" : ""}${p.agentOnline ? "" : " — Agent offline"}</option>`)
+        .join("");
+      renderQueueTable();
+      if (!state.printers.length) {
+        msg("#print-result", "err", state.active === "bridge" ? "macOS kennt auf diesem Mac keinen Drucker." : "In der Warteschlange ist kein Drucker gemeldet.", state.active === "bridge" ? "Systemeinstellungen › Drucker & Scanner › Drucker hinzufügen." : "Der Agent im Büro muss laufen und freigeschaltet sein — siehe „Verbindung“.");
+        $("#print-options").innerHTML = "";
         return;
       }
-      renderQueueTable();
+      const offline = state.printers.every((p) => !p.agentOnline);
+      if (state.active === "relay" && offline) {
+        msg("#banner", "err", "Der Agent im Büro hat sich zuletzt vor über fünf Minuten gemeldet.", "Aufträge bleiben in der Warteschlange, bis er wieder läuft.");
+      }
       await loadOptions();
+      fillScanHosts();
     } catch (e) {
       showError("#print-result", e);
     }
+  }
+
+  function currentPrinter() {
+    const id = $("#print-queue").value;
+    return state.printers.find((p) => String(p.id) === id) || null;
   }
 
   function renderQueueTable() {
@@ -171,72 +200,63 @@
     body.innerHTML = state.printers
       .map((p) => {
         const cls = p.state === "idle" ? "ok" : p.state === "disabled" ? "err" : "warn";
-        return `<tr><td><strong>${esc(p.name)}</strong>${p.isDefault ? ' <span class="pill">Standard</span>' : ""}</td><td><span class="pill ${cls}">${esc(p.stateText)}</span></td><td class="mono">${esc(p.device || "—")}</td></tr>`;
+        const via = state.active === "bridge" ? "Helfer" : `${esc(p.agent?.name || "Agent")}${p.agentOnline ? "" : " (offline)"}`;
+        return `<tr><td><strong>${esc(p.display_name || p.queue)}</strong>${p.is_default ? ' <span class="pill">Standard</span>' : ""}</td><td><span class="pill ${cls}">${esc(p.state_text || p.state || "?")}</span></td><td>${via}</td></tr>`;
       })
       .join("");
   }
 
-  const OPTION_LABELS = {
-    ColorModel: "Farbe",
-    Duplex: "Beidseitig",
-    PageSize: "Papierformat",
-    InputSlot: "Papierquelle",
-    MediaType: "Medium",
-    Collate: "Sortieren",
-    cupsPrintQuality: "Qualität",
-    cupsFinishingTemplate: "Finishing",
-  };
-  const VALUE_LABELS = {
-    RGB: "Farbe",
-    Gray: "Graustufen",
-    Gray16: "Graustufen (16 bit)",
-    None: "Aus",
-    DuplexNoTumble: "Ein (lange Kante)",
-    DuplexTumble: "Ein (kurze Kante)",
-    True: "Ja",
-    False: "Nein",
-    auto: "Automatisch",
-    "by-pass-tray": "Mehrzweckfach",
-    "tray-1": "Kassette 1",
-    none: "Keins",
-  };
-
   async function loadOptions() {
-    const queue = $("#print-queue").value;
+    const printer = currentPrinter();
     const wrap = $("#print-options");
-    if (!queue) return;
-    wrap.innerHTML = '<div style="color:var(--muted);font-size:.84rem"><i class="fa-solid fa-circle-notch spin"></i> Optionen werden gelesen</div>';
-    try {
-      const { options } = await call("/api/printer/options?queue=" + encodeURIComponent(queue));
-      wrap.innerHTML = options
-        .filter((o) => o.values.length > 1)
-        .map((o) => {
-          const label = OPTION_LABELS[o.key] || o.label;
-          const opts = [...new Set(o.values)].map((v) => `<option value="${esc(v)}"${v === o.current ? " selected" : ""}>${esc(VALUE_LABELS[v] || v)}</option>`).join("");
-          return `<div><label for="opt-${esc(o.key)}">${esc(label)}</label><select id="opt-${esc(o.key)}" data-opt="${esc(o.key)}">${opts}</select></div>`;
-        })
-        .join("");
-      if (!wrap.innerHTML) wrap.innerHTML = `<div style="color:var(--muted);font-size:.84rem">Dieser Treiber bietet keine wählbaren Optionen.</div>`;
-    } catch (e) {
-      showError("#print-result", e);
-      wrap.innerHTML = "";
+    if (!printer) return;
+    let options = printer.options;
+    if (state.active === "bridge") {
+      wrap.innerHTML = '<div style="color:var(--muted);font-size:.84rem"><i class="fa-solid fa-circle-notch spin"></i> Optionen werden gelesen</div>';
+      try {
+        options = (await call("/api/printer/options?queue=" + encodeURIComponent(printer.queue))).options;
+        printer.options = options;
+      } catch (e) {
+        wrap.innerHTML = "";
+        return showError("#print-result", e);
+      }
     }
+    const usable = (options || []).filter((o) => (o.values || []).length > 1);
+    wrap.innerHTML = usable.length
+      ? usable
+          .map((o) => {
+            const label = OPTION_LABELS[o.key] || o.label;
+            const opts = [...new Set(o.values)].map((v) => `<option value="${esc(v)}"${v === o.current ? " selected" : ""}>${esc(VALUE_LABELS[v] || v)}</option>`).join("");
+            return `<div><label for="opt-${esc(o.key)}">${esc(label)}</label><select id="opt-${esc(o.key)}" data-opt="${esc(o.key)}">${opts}</select></div>`;
+          })
+          .join("")
+      : `<div style="color:var(--muted);font-size:.84rem">Für diesen Drucker sind keine Optionen gemeldet.</div>`;
   }
 
   async function doPrint(file, filename) {
-    const queue = $("#print-queue").value;
-    if (!queue) return msg("#print-result", "err", "Kein Drucker gewählt.", "Erst einen Drucker in der Liste auswählen.");
+    const printer = currentPrinter();
+    if (!printer) return msg("#print-result", "err", "Kein Drucker gewählt.", "Erst einen Drucker in der Liste auswählen.");
     const options = {};
     $$("#print-options select").forEach((s) => (options[s.dataset.opt] = s.value));
-    const qs = new URLSearchParams({ queue, copies: $("#print-copies").value || "1", options: JSON.stringify(options) });
+    const copies = $("#print-copies").value || "1";
     msg("#print-result", "info", "Auftrag wird übergeben…");
     try {
-      const res = await call("/api/print?" + qs.toString(), {
-        method: "POST",
-        body: file,
-        headers: { "Content-Type": "application/octet-stream", "X-Roots-Filename": filename.replace(/[^\x20-\x7e]/g, "_") },
-      });
-      msg("#print-result", "ok", `An „${queue}“ übergeben.`, res.jobId ? `Auftrag <code>${esc(res.jobId)}</code>` : null);
+      if (state.active === "bridge") {
+        const qs = new URLSearchParams({ queue: printer.queue, copies, options: JSON.stringify(options) });
+        const res = await call("/api/print?" + qs.toString(), {
+          method: "POST",
+          body: file,
+          headers: { "Content-Type": "application/octet-stream", "X-Roots-Filename": filename.replace(/[^\x20-\x7e]/g, "_") },
+        });
+        msg("#print-result", "ok", `An „${printer.queue}“ übergeben.`, res.jobId ? `Auftrag <code>${esc(res.jobId)}</code>` : null);
+        loadJobs();
+        return;
+      }
+      const jobId = await relay().submitPrint(printer.id, file, filename, { copies: Number(copies), options });
+      msg("#print-result", "info", "In der Warteschlange. Warte auf den Agenten…");
+      const done = await relay().waitFor(jobId, null, { timeoutMs: 180000 });
+      if (done.status === "error") return showError("#print-result", done.error || { message: "Der Auftrag ist fehlgeschlagen." });
+      msg("#print-result", "ok", `An „${printer.display_name || printer.queue}“ gedruckt.`, done.result?.jobId ? `Auftrag <code>${esc(done.result.jobId)}</code>` : null);
       loadJobs();
     } catch (e) {
       showError("#print-result", e);
@@ -247,6 +267,22 @@
 
   async function loadDevices() {
     const body = $("#dev-table tbody");
+    if (state.active === "relay") {
+      const agents = await relay().agentList();
+      body.innerHTML = agents.length
+        ? agents
+            .map((a) => {
+              const seen = a.last_seen_at ? Date.parse(a.last_seen_at) : 0;
+              const online = seen && Date.now() - seen < relay().AGENT_STALE_MS;
+              return `<tr><td><strong>${esc(a.name)}</strong></td><td class="mono">${esc(a.hostname || "—")}</td><td>${esc(a.version || "—")}</td><td><span class="pill ${online ? "ok" : "err"}">${online ? "läuft" : "offline"}</span> ${a.last_seen_at ? new Date(a.last_seen_at).toLocaleString("de-DE") : ""}</td></tr>`;
+            })
+            .join("")
+        : `<tr><td colspan="4">Kein Agent freigeschaltet. Siehe „Verbindung“.</td></tr>`;
+      $("#dev-ssid").innerHTML = '<i class="fa-solid fa-cloud"></i> über Warteschlange';
+      $("#dev-head").textContent = "Agenten";
+      return;
+    }
+    $("#dev-head").textContent = "AirPrint im Netz";
     body.innerHTML = `<tr><td colspan="4"><i class="fa-solid fa-circle-notch spin"></i> Netz wird durchsucht</td></tr>`;
     try {
       const { devices } = await call("/api/discover", { timeout: 40000 });
@@ -255,11 +291,10 @@
         ? devices
             .map((d) => {
               const can = [d.canScan ? "Scan" : null, d.canColor ? "Farbe" : null, d.canDuplex ? "Duplex" : null].filter(Boolean).join(" · ") || "—";
-              const admin = d.adminUrl ? `<a href="${esc(d.adminUrl)}" target="_blank" rel="noopener">öffnen</a>` : "—";
-              return `<tr><td><strong>${esc(d.model || d.instance)}</strong></td><td class="mono">${esc(d.host || "—")}</td><td>${esc(can)}</td><td>${admin}</td></tr>`;
+              return `<tr><td><strong>${esc(d.model || d.instance)}</strong></td><td class="mono">${esc(d.host || "—")}</td><td>${esc(can)}</td><td>${d.adminUrl ? `<code class="mono">${esc(d.adminUrl)}</code>` : "—"}</td></tr>`;
             })
             .join("")
-        : `<tr><td colspan="4">Kein AirPrint-Gerät geantwortet. Gerät wecken oder Netz prüfen (Diagnose).</td></tr>`;
+        : `<tr><td colspan="4">Kein AirPrint-Gerät geantwortet. Gerät wecken oder Diagnose starten.</td></tr>`;
       fillScanHosts();
     } catch (e) {
       body.innerHTML = "";
@@ -267,48 +302,56 @@
     }
   }
 
-  function fillScanHosts() {
-    const sel = $("#scan-host");
-    const scanners = state.devices.filter((d) => d.canScan && d.host);
-    const prev = sel.value;
-    sel.innerHTML = scanners.map((d) => `<option value="${esc(d.host)}">${esc(d.model || d.instance)} — ${esc(d.host)}</option>`).join("");
-    if (!scanners.length) {
-      sel.innerHTML = `<option value="">Kein Scanner gefunden</option>`;
-      msg("#scan-result", "err", "Im Netz hat kein Gerät mit Scan-Funktion geantwortet.", "Unter „Geräte“ neu suchen. Bleibt es leer: Diagnose starten — meist ist der Drucker im Ruhezustand oder in einem anderen WLAN.");
-      return;
-    }
-    if (prev && scanners.some((d) => d.host === prev)) sel.value = prev;
-    loadCaps();
-  }
-
   /* --------------------------------------------------------------- scanner --- */
 
   const COLOR_LABELS = { RGB24: "Farbe", Grayscale8: "Graustufen", BlackAndWhite1: "Schwarzweiß" };
   const INTENT_LABELS = { Document: "Dokument", Photo: "Foto", TextAndGraphic: "Text & Grafik", Preview: "Vorschau" };
-  const FORMAT_LABELS = { "application/pdf": "PDF", "image/jpeg": "JPEG", "image/png": "PNG", "application/octet-stream": "Rohdaten" };
-  const PAPER = {
-    "": "Ganze Fläche",
-    a4: { label: "A4", w: 2480, h: 3508 },
-    letter: { label: "Letter", w: 2550, h: 3300 },
-    a5: { label: "A5", w: 1748, h: 2480 },
-  };
+  const FORMAT_LABELS = { "application/pdf": "PDF", "image/jpeg": "JPEG", "image/png": "PNG" };
+  const PAPER = { "": "Ganze Fläche", a4: { label: "A4", w: 2480, h: 3508 }, letter: { label: "Letter", w: 2550, h: 3300 }, a5: { label: "A5", w: 1748, h: 2480 } };
+
+  function scanners() {
+    if (state.active === "relay") return state.printers.filter((p) => p.can_scan && p.scan_host).map((p) => ({ id: p.id, label: p.display_name || p.queue, host: p.scan_host, caps: p.scan_caps, online: p.agentOnline }));
+    return state.devices.filter((d) => d.canScan && d.host).map((d) => ({ id: d.host, label: d.model || d.instance, host: d.host, caps: null, online: true }));
+  }
+
+  function fillScanHosts() {
+    const sel = $("#scan-host");
+    const list = scanners();
+    const prev = sel.value;
+    sel.innerHTML = list.map((s) => `<option value="${esc(s.id)}">${esc(s.label)} — ${esc(s.host)}${s.online ? "" : " (Agent offline)"}</option>`).join("");
+    if (!list.length) {
+      sel.innerHTML = `<option value="">Kein Scanner gemeldet</option>`;
+      msg("#scan-result", "err", "Es ist kein Gerät mit Scan-Funktion gemeldet.", state.active === "bridge" ? "Unter „Geräte“ das Netz durchsuchen. Bleibt es leer: Diagnose starten." : "Der Agent im Büro muss laufen; er meldet die Scan-Fähigkeiten mit.");
+      return;
+    }
+    if (prev && list.some((s) => String(s.id) === prev)) sel.value = prev;
+    loadCaps();
+  }
+
+  function currentScanner() {
+    const id = $("#scan-host").value;
+    return scanners().find((s) => String(s.id) === id) || null;
+  }
 
   function sourceCaps() {
     if (!state.caps) return null;
     const src = $("#scan-source").value;
-    if (src === "feeder") return $("#scan-duplex").value === "1" ? state.caps.sources.feederDuplex || state.caps.sources.feeder : state.caps.sources.feeder;
+    if (src === "feeder") return ($("#scan-duplex").value === "1" && state.caps.sources.feederDuplex) || state.caps.sources.feeder;
     return state.caps.sources.platen;
   }
 
   async function loadCaps() {
-    const host = $("#scan-host").value;
-    if (!host) return;
+    const s = currentScanner();
+    if (!s) return;
     clear("#scan-result");
     try {
-      state.caps = await call("/api/scanner/capabilities?host=" + encodeURIComponent(host), { timeout: 30000 });
-      const s = state.caps.sources;
-      const sel = $("#scan-source");
-      sel.innerHTML = [s.platen ? '<option value="platen">Flachbett</option>' : "", s.feeder ? '<option value="feeder">Einzug</option>' : ""].join("");
+      state.caps = s.caps || (state.active === "bridge" ? await call("/api/scanner/capabilities?host=" + encodeURIComponent(s.host), { timeout: 30000 }) : null);
+      if (!state.caps) {
+        msg("#scan-result", "err", "Für dieses Gerät sind keine Scan-Fähigkeiten gemeldet.", "Der Agent liest sie beim Start. Agent neu starten, danach Liste neu laden.");
+        return;
+      }
+      const src = state.caps.sources;
+      $("#scan-source").innerHTML = [src.platen ? '<option value="platen">Flachbett</option>' : "", src.feeder ? '<option value="feeder">Einzug</option>' : ""].join("");
       $("#scan-duplex").disabled = !state.caps.supportsDuplex;
       if (!state.caps.supportsDuplex) $("#scan-duplex").value = "0";
       renderScanOptions();
@@ -329,32 +372,28 @@
       if (prev && list.includes(prev)) el.value = prev;
     };
     fill("#scan-color", caps.colorModes, COLOR_LABELS, ["RGB24"]);
-    fill("#scan-res", caps.resolutions.map(String), null, ["300"]);
-    fill(
-      "#scan-format",
-      caps.formats.filter((f) => f !== "application/octet-stream"),
-      FORMAT_LABELS,
-      ["application/pdf"]
-    );
+    fill("#scan-res", (caps.resolutions || []).map(String), null, ["300"]);
+    fill("#scan-format", (caps.formats || []).filter((f) => f !== "application/octet-stream"), FORMAT_LABELS, ["application/pdf"]);
     fill("#scan-intent", caps.intents, INTENT_LABELS, ["Document"]);
-    $("#scan-size").innerHTML = Object.entries(PAPER)
-      .map(([k, v]) => `<option value="${k}">${esc(typeof v === "string" ? v : v.label)}</option>`)
-      .join("");
-    $("#scan-res").insertAdjacentHTML("beforeend", "");
+    $("#scan-size").innerHTML = Object.entries(PAPER).map(([k, v]) => `<option value="${k}">${esc(typeof v === "string" ? v : v.label)}</option>`).join("");
     $$("#scan-res option").forEach((o) => (o.textContent = o.value + " dpi"));
   }
 
   async function refreshScannerStatus() {
-    const host = $("#scan-host").value;
+    const s = currentScanner();
     const pill = $("#scan-adf");
-    if (!host) return;
+    if (!s) return;
+    if (state.active === "relay") {
+      pill.className = "pill " + (s.online ? "ok" : "err");
+      pill.innerHTML = `<i class="fa-solid fa-${s.online ? "circle-check" : "circle-xmark"}"></i> Agent ${s.online ? "läuft" : "offline"}`;
+      return;
+    }
     pill.className = "pill";
     pill.innerHTML = '<i class="fa-solid fa-circle-notch spin"></i> Status';
     try {
-      const st = await call("/api/scanner/status?host=" + encodeURIComponent(host), { timeout: 15000 });
-      const loaded = st.adfLoaded;
-      pill.className = "pill " + (st.state === "Idle" ? (loaded ? "ok" : "") : "warn");
-      pill.innerHTML = `<i class="fa-solid fa-${st.state === "Idle" ? "circle-check" : "hourglass-half"}"></i> ${esc(st.state || "?")}${st.adfState ? " · Einzug " + (loaded ? "belegt" : "leer") : ""}`;
+      const st = await call("/api/scanner/status?host=" + encodeURIComponent(s.host), { timeout: 15000 });
+      pill.className = "pill " + (st.state === "Idle" ? (st.adfLoaded ? "ok" : "") : "warn");
+      pill.innerHTML = `<i class="fa-solid fa-${st.state === "Idle" ? "circle-check" : "hourglass-half"}"></i> ${esc(st.state || "?")}${st.adfState ? " · Einzug " + (st.adfLoaded ? "belegt" : "leer") : ""}`;
     } catch (e) {
       pill.className = "pill err";
       pill.innerHTML = '<i class="fa-solid fa-circle-xmark"></i> kein Status';
@@ -362,12 +401,10 @@
     }
   }
 
-  async function startScan() {
-    const host = $("#scan-host").value;
-    if (!host) return msg("#scan-result", "err", "Kein Scanner gewählt.", "Unter „Geräte“ das Netz durchsuchen.");
+  function scanSettings(scanner) {
     const size = PAPER[$("#scan-size").value];
-    const body = {
-      host,
+    const s = {
+      host: scanner.host,
       source: $("#scan-source").value,
       colorMode: $("#scan-color").value,
       resolution: Number($("#scan-res").value),
@@ -375,19 +412,37 @@
       intent: $("#scan-intent").value,
       duplex: $("#scan-duplex").value === "1",
     };
-    // eSCL scan regions are counted in 1/300 inch, independent of resolution.
+    // eSCL zählt Scanbereiche in 1/300 Zoll, unabhängig von der Auflösung.
     if (size && typeof size !== "string") {
-      body.width = size.w;
-      body.height = size.h;
+      s.width = size.w;
+      s.height = size.h;
     }
+    return s;
+  }
+
+  async function startScan() {
+    const scanner = currentScanner();
+    if (!scanner) return msg("#scan-result", "err", "Kein Scanner gewählt.", "Unter „Geräte“ nachsehen, welche Geräte gemeldet sind.");
     $("#scan-go").disabled = true;
     $("#scan-pages").innerHTML = "";
     $("#scan-actions").classList.add("hidden");
-    msg("#scan-result", "info", "Scan läuft…", "Der Auftrag wird am Gerät ausgeführt. Seiten erscheinen, sobald sie übertragen sind.");
+    state.scanPages = [];
+    msg("#scan-result", "info", "Scan läuft…", "Seiten erscheinen, sobald sie übertragen sind.");
+    const settings = scanSettings(scanner);
     try {
-      const job = await call("/api/scan", { method: "POST", body: JSON.stringify(body), headers: { "Content-Type": "application/json" }, timeout: 60000 });
-      state.scan = job;
-      pollScan();
+      if (state.active === "bridge") {
+        state.scan = await call("/api/scan", { method: "POST", body: JSON.stringify(settings), headers: { "Content-Type": "application/json" }, timeout: 60000 });
+        pollScan();
+        return;
+      }
+      const jobId = await relay().submitScan(scanner.id, settings);
+      const done = await relay().waitFor(jobId, (st) => renderRelayPages(st), { timeoutMs: 420000 });
+      $("#scan-go").disabled = false;
+      if (done.status === "error") return showError("#scan-result", done.error || { message: "Der Scan ist fehlgeschlagen." });
+      renderRelayPages(done);
+      const secs = Math.round((Date.parse(done.finished_at) - Date.parse(done.created_at)) / 1000);
+      msg("#scan-result", "ok", `${done.pages.length} ${done.pages.length === 1 ? "Seite" : "Seiten"} gescannt.`, `${secs} s · ${settings.resolution} dpi · ${COLOR_LABELS[settings.colorMode] || settings.colorMode}`);
+      $("#scan-actions").classList.toggle("hidden", !done.pages.length);
     } catch (e) {
       $("#scan-go").disabled = false;
       showError("#scan-result", e);
@@ -399,16 +454,13 @@
     clearTimeout(state.pollTimer);
     try {
       const job = await call("/api/scan/" + encodeURIComponent(state.scan.id), { timeout: 30000 });
-      renderPages(job);
+      renderBridgePages(job);
       if (job.state === "running") {
         state.pollTimer = setTimeout(pollScan, 1500);
         return;
       }
       $("#scan-go").disabled = false;
-      if (job.state === "error") {
-        showError("#scan-result", job.error || { message: "Der Scan brach ab." });
-        return;
-      }
+      if (job.state === "error") return showError("#scan-result", job.error || { message: "Der Scan brach ab." });
       msg("#scan-result", "ok", `${job.pages.length} ${job.pages.length === 1 ? "Seite" : "Seiten"} gescannt.`, `${Math.round(job.elapsedMs / 1000)} s · ${job.settings.resolution} dpi · ${COLOR_LABELS[job.settings.colorMode] || job.settings.colorMode}`);
       $("#scan-actions").classList.toggle("hidden", !job.pages.length);
     } catch (e) {
@@ -417,123 +469,186 @@
     }
   }
 
-  function pageUrl(page) {
-    return state.url + page.url + "?token=" + encodeURIComponent(state.token);
+  /* ----------------------------------------------------------------- pages --- */
+
+  function ext(mime) {
+    return mime.includes("pdf") ? "pdf" : mime.includes("png") ? "png" : "jpg";
   }
 
-  function renderPages(job) {
+  function renderBridgePages(job) {
+    state.scanPages = job.pages.map((p, i) => ({ idx: i, mime: p.mime, bytes: p.bytes, url: state.url + p.url + "?token=" + encodeURIComponent(state.token) }));
+    paintPages();
+  }
+
+  function renderRelayPages(job) {
+    state.scanPages = job.pages.map((p) => ({ idx: p.idx, mime: p.mime, bytes: p.bytes, page: p }));
+    paintPages();
+  }
+
+  function paintPages() {
     const wrap = $("#scan-pages");
-    wrap.innerHTML = job.pages
+    wrap.innerHTML = state.scanPages
       .map((p, i) => {
-        const url = pageUrl(p);
-        const ext = p.mime.includes("pdf") ? "pdf" : p.mime.includes("png") ? "png" : "jpg";
-        const thumb = p.mime.startsWith("image/") ? `<img src="${esc(url)}" alt="Seite ${i + 1}">` : `<i class="fa-solid fa-file-pdf"></i>`;
+        const thumb = p.url && p.mime.startsWith("image/") ? `<img src="${esc(p.url)}" alt="Seite ${i + 1}">` : `<i class="fa-solid fa-${p.mime.includes("pdf") ? "file-pdf" : "image"}"></i>`;
         return `<div class="page">
-          <div class="thumb" data-preview="${i}" data-mime="${esc(p.mime)}">${thumb}</div>
-          <div class="meta"><span>Seite ${i + 1} · ${bytes(p.bytes)}</span><a href="${esc(url)}" download="scan-${String(i + 1).padStart(2, "0")}.${ext}">Laden</a></div>
+          <div class="thumb" data-idx="${i}">${thumb}</div>
+          <div class="meta"><span>Seite ${i + 1} · ${bytes(p.bytes)}</span><a href="#" data-dl="${i}">Laden</a></div>
         </div>`;
       })
       .join("");
-    $$("#scan-pages .meta a").forEach((el, i) =>
+    $$("#scan-pages .thumb").forEach((el) => el.addEventListener("click", () => openPreview(Number(el.dataset.idx))));
+    $$("#scan-pages [data-dl]").forEach((el) =>
       el.addEventListener("click", (ev) => {
-        if (!window.RootsUserBridge?.downloadBlob) return;
         ev.preventDefault();
-        savePage(job.pages[i], i);
+        savePage(Number(el.dataset.dl));
       })
     );
-    $$("#scan-pages .thumb").forEach((el) =>
-      el.addEventListener("click", () => {
-        const idx = Number(el.dataset.preview);
-        openPreview(job.pages[idx], idx);
-      })
-    );
-    state.scanPages = job.pages;
   }
 
-  /** In the intranet iframe a plain <a download> is inert, so hand the blob over. */
-  async function savePage(page, idx) {
-    const name = `scan-${String(idx + 1).padStart(2, "0")}.${page.mime.includes("pdf") ? "pdf" : page.mime.includes("png") ? "png" : "jpg"}`;
-    if (window.RootsUserBridge?.downloadBlob) {
-      try {
-        const res = await call(page.url, { raw: true });
-        window.RootsUserBridge.downloadBlob(await res.blob(), name);
-        return;
-      } catch (e) {
-        showError("#scan-result", e);
+  /** Blob-URL für Vorschau und Download; im Relay kommen die Bytes per RPC. */
+  async function pageObjectUrl(p) {
+    if (p.url) return p.url;
+    const blob = await relay().pageBlob(p.page);
+    p.blobUrl = p.blobUrl || URL.createObjectURL(blob);
+    p.blob = blob;
+    return p.blobUrl;
+  }
+
+  async function pageBlob(p) {
+    if (p.blob) return p.blob;
+    if (p.url) {
+      const res = await call(p.url.replace(state.url, "").split("?")[0], { raw: true });
+      p.blob = await res.blob();
+      return p.blob;
+    }
+    await pageObjectUrl(p);
+    return p.blob;
+  }
+
+  async function savePage(i) {
+    const p = state.scanPages[i];
+    if (!p) return;
+    const name = `scan-${String(i + 1).padStart(2, "0")}.${ext(p.mime)}`;
+    try {
+      const blob = await pageBlob(p);
+      if (window.RootsUserBridge?.downloadBlob) {
+        window.RootsUserBridge.downloadBlob(blob, name);
         return;
       }
-    }
-    const a = document.createElement("a");
-    a.href = pageUrl(page);
-    a.download = name;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-  }
-
-  function openPreview(page, idx) {
-    const url = pageUrl(page);
-    const ext = page.mime.includes("pdf") ? "pdf" : page.mime.includes("png") ? "png" : "jpg";
-    $("#modal-title").textContent = `Seite ${idx + 1}`;
-    $("#modal-content").innerHTML = page.mime.startsWith("image/") ? `<img src="${esc(url)}" alt="Seite ${idx + 1}">` : `<iframe src="${esc(url)}" style="height:80vh" title="Seite ${idx + 1}"></iframe>`;
-    const dl = $("#modal-dl");
-    dl.href = url;
-    dl.download = `scan-${String(idx + 1).padStart(2, "0")}.${ext}`;
-    $("#modal").classList.remove("hidden");
-  }
-
-  async function printScan() {
-    const pages = state.scanPages || [];
-    if (!pages.length) return;
-    msg("#scan-result", "info", "Scan wird an den Drucker übergeben…");
-    try {
-      const res = await call(pages[0].url, { raw: true });
-      const blob = await res.blob();
-      await doPrint(blob, "scan.pdf");
-      msg("#scan-result", "ok", "Erste Seite an den Drucker übergeben.", pages.length > 1 ? "Weitere Seiten einzeln über „Drucken“ übergeben." : null);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
     } catch (e) {
       showError("#scan-result", e);
     }
   }
 
-  /* ---------------------------------------------------------------- jobs --- */
+  async function openPreview(i) {
+    const p = state.scanPages[i];
+    if (!p) return;
+    $("#modal-title").textContent = `Seite ${i + 1}`;
+    $("#modal-content").innerHTML = '<i class="fa-solid fa-circle-notch spin" style="font-size:1.6rem;color:#94a3b8"></i>';
+    $("#modal").classList.remove("hidden");
+    try {
+      const url = await pageObjectUrl(p);
+      $("#modal-content").innerHTML = p.mime.startsWith("image/") ? `<img src="${esc(url)}" alt="Seite ${i + 1}">` : `<iframe src="${esc(url)}" style="height:80vh" title="Seite ${i + 1}"></iframe>`;
+      const dl = $("#modal-dl");
+      dl.onclick = (ev) => {
+        ev.preventDefault();
+        savePage(i);
+      };
+    } catch (e) {
+      $("#modal-content").innerHTML = "";
+      showError("#scan-result", e);
+      $("#modal").classList.add("hidden");
+    }
+  }
+
+  async function printScan() {
+    const p = state.scanPages[0];
+    if (!p) return;
+    msg("#scan-result", "info", "Scan wird an den Drucker übergeben…");
+    try {
+      await doPrint(await pageBlob(p), "scan." + ext(p.mime));
+    } catch (e) {
+      showError("#scan-result", e);
+    }
+  }
+
+  /* ------------------------------------------------------------------ jobs --- */
 
   async function loadJobs() {
     const body = $("#jobs-table tbody");
     if (!body) return;
     try {
-      const queue = $("#print-queue").value || "";
-      const { jobs } = await call("/api/printer/jobs?queue=" + encodeURIComponent(queue));
-      body.innerHTML = jobs.length ? jobs.map((j) => `<tr><td class="mono">${esc(j.id)}</td><td>${esc(j.user || "—")}</td><td>${j.size ? bytes(j.size) : "—"}</td></tr>`).join("") : `<tr><td colspan="3">Keine offenen Aufträge.</td></tr>`;
+      if (state.active === "bridge") {
+        const { jobs } = await call("/api/printer/jobs?queue=" + encodeURIComponent(currentPrinter()?.queue || ""));
+        body.innerHTML = jobs.length ? jobs.map((j) => `<tr><td class="mono">${esc(j.id)}</td><td>${esc(j.user || "—")}</td><td>${j.size ? bytes(j.size) : "—"}</td><td>im Drucker</td></tr>`).join("") : `<tr><td colspan="4">Keine offenen Aufträge.</td></tr>`;
+        return;
+      }
+      const { data, error } = await window.__rootsSupabaseClient.from("print_jobs").select("*").order("created_at", { ascending: false }).limit(25);
+      if (error) throw error;
+      const label = { queued: "wartet", claimed: "übernommen", running: "läuft", done: "fertig", error: "Fehler" };
+      const cls = { queued: "warn", claimed: "warn", running: "warn", done: "ok", error: "err" };
+      body.innerHTML = (data || []).length
+        ? data
+            .map((j) => `<tr><td class="mono">${esc(j.kind)} · ${esc(j.id.slice(0, 8))}</td><td>${esc(j.requested_email || "—")}</td><td>${esc(j.filename || (j.settings?.resolution ? j.settings.resolution + " dpi" : "—"))}</td><td><span class="pill ${cls[j.status] || ""}">${esc(label[j.status] || j.status)}</span> ${new Date(j.created_at).toLocaleString("de-DE")}${j.error?.message ? `<div style="color:var(--err);font-size:.78rem">${esc(j.error.message)}</div>` : ""}</td></tr>`)
+            .join("")
+        : `<tr><td colspan="4">Keine Aufträge in den letzten drei Tagen.</td></tr>`;
     } catch (e) {
       body.innerHTML = "";
-      showError("#banner", e);
+      showError("#banner", e.hint ? e : { message: e.message || "Aufträge konnten nicht geladen werden." });
     }
   }
 
-  /* ------------------------------------------------------------- diagnose --- */
+  /* -------------------------------------------------------------- diagnose --- */
 
   async function runDiagnose() {
     const out = $("#diag-out");
+    if (state.active !== "bridge") {
+      const agents = await relay().agentList();
+      const online = agents.filter((a) => a.last_seen_at && Date.now() - Date.parse(a.last_seen_at) < relay().AGENT_STALE_MS);
+      const checks = [
+        { ok: true, label: "Warteschlange", detail: "Supabase erreichbar", hint: null },
+        { ok: agents.length > 0, label: "Agent freigeschaltet", detail: `${agents.length} eingetragen`, hint: agents.length ? null : "Agent im Büro starten und den angezeigten Hash unter „Verbindung“ eintragen." },
+        { ok: online.length > 0, label: "Agent läuft", detail: online.length ? online.map((a) => a.name).join(", ") : "keine Meldung in den letzten fünf Minuten", hint: online.length ? null : "Auf dem Büro-Rechner: `node bridge/roots-print-agent.js`." },
+        { ok: state.printers.length > 0, label: "Drucker gemeldet", detail: state.printers.map((p) => p.display_name || p.queue).join(", ") || "keine", hint: state.printers.length ? null : "Der Agent meldet Drucker beim Start; Agent neu starten." },
+      ];
+      out.innerHTML = renderChecks(checks);
+      out.insertAdjacentHTML(
+        "beforeend",
+        '<div class="msg info" style="margin-top:14px"><i class="fa-solid fa-circle-info"></i><div><strong>Die Netzprüfung am Gerät läuft nur über den lokalen Helfer.</strong><span class="hint">Die Warteschlange sieht den Drucker nicht selbst — sie kennt nur, was der Agent meldet.</span></div></div>'
+      );
+      return;
+    }
     out.innerHTML = '<i class="fa-solid fa-circle-notch spin"></i> Prüfung läuft';
-    const host = $("#scan-host").value || (state.devices[0] && state.devices[0].host) || "";
     try {
+      const host = currentScanner()?.host || "";
       const d = await call("/api/diagnose?host=" + encodeURIComponent(host), { timeout: 60000 });
       $("#dev-ssid").innerHTML = `<i class="fa-solid fa-wifi"></i> ${esc(d.ssid || "kein WLAN")}`;
-      out.innerHTML = d.checks
-        .map(
-          (c) => `<div class="check">
-            <div class="ico ${c.ok ? "ok" : "bad"}"><i class="fa-solid fa-${c.ok ? "circle-check" : "circle-xmark"}"></i></div>
-            <div class="body"><strong>${esc(c.label)}</strong>
-              <div class="detail mono">${esc(c.detail)}</div>
-              ${c.hint ? `<div class="fix"><i class="fa-solid fa-wrench"></i> ${esc(c.hint)}</div>` : ""}
-            </div></div>`
-        )
-        .join("");
+      out.innerHTML = renderChecks(d.checks);
     } catch (e) {
       out.innerHTML = "";
       showError("#diag-out", e);
     }
+  }
+
+  function renderChecks(checks) {
+    return checks
+      .map(
+        (c) => `<div class="check">
+          <div class="ico ${c.ok ? "ok" : "bad"}"><i class="fa-solid fa-${c.ok ? "circle-check" : "circle-xmark"}"></i></div>
+          <div class="body"><strong>${esc(c.label)}</strong>
+            <div class="detail mono">${esc(c.detail)}</div>
+            ${c.hint ? `<div class="fix"><i class="fa-solid fa-wrench"></i> ${esc(c.hint)}</div>` : ""}
+          </div></div>`
+      )
+      .join("");
   }
 
   /* ----------------------------------------------------------------- auth --- */
@@ -549,9 +664,10 @@
 
   async function bootAuth() {
     sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY);
-    // roots-user-bridge.js picks the client up here and installs the session
-    // the intranet hands over, exactly as in the other ROOTS tools.
+    // roots-user-bridge.js greift den Client hier ab und setzt die Sitzung, die
+    // das Intranet übergibt — wie in den anderen ROOTS-Tools.
     window.__rootsSupabaseClient = sb;
+    relay().use(sb);
 
     if (EMBEDDED) {
       $("#login-form").classList.add("hidden");
@@ -562,8 +678,6 @@
         msg("#gate-msg", "err", "Die Sitzung des Intranets ist beendet.", "Im Intranet neu anmelden, danach das Tool erneut öffnen.");
         showGate(true);
       });
-      // The bridge repeats the hand-off while the frame starts; ask once itself
-      // in case this frame was loaded before the parent was ready.
       setTimeout(() => window.RootsUserBridge?.syncAuthFromParentStorage?.(), 300);
       setTimeout(() => {
         if (!$("#app").classList.contains("hidden")) return;
@@ -591,10 +705,21 @@
       try {
         window.RootsUser._loadAndMount(sb);
       } catch (e) {
-        /* bridge mounts itself when ready */
+        /* die Bridge hängt sich selbst ein, sobald sie bereit ist */
       }
     }
+    void loadProfile();
     bootApp();
+  }
+
+  async function loadProfile() {
+    try {
+      const { data } = await sb.from("profiles").select("id, app_role").eq("id", (await sb.auth.getUser()).data.user.id).maybeSingle();
+      state.profile = data || null;
+      $("#agent-admin").classList.toggle("hidden", data?.app_role !== "admin");
+    } catch (e) {
+      /* ohne Profil bleibt der Agent-Bereich verborgen */
+    }
   }
 
   function showGate(keepMsg) {
@@ -611,17 +736,25 @@
     booted = true;
     $("#conn-url").value = state.url;
     $("#conn-token").value = state.token;
-    const ok = await detectBridge();
-    if (!ok) return;
+    $("#conn-mode").value = state.mode;
+    await pickMode();
+    renderModePill();
     await loadPrinters();
-    await loadDevices();
+    loadDevices();
     loadJobs();
+  }
+
+  async function rebootApp() {
+    booted = false;
+    clear("#banner");
+    await bootApp();
   }
 
   function switchView(view) {
     $$("nav button").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
     $$("section[data-panel]").forEach((s) => s.classList.toggle("hidden", s.dataset.panel !== view));
     if (view === "jobs") loadJobs();
+    if (view === "devices") loadDevices();
     if (view === "scan" && !state.caps) fillScanHosts();
   }
 
@@ -640,7 +773,10 @@
     $("#logout").addEventListener("click", () => sb.auth.signOut().then(() => location.reload()));
     $$("nav button").forEach((b) => b.addEventListener("click", () => switchView(b.dataset.view)));
 
-    $("#print-queue").addEventListener("change", loadOptions);
+    $("#print-queue").addEventListener("change", () => {
+      loadOptions();
+      loadJobs();
+    });
     $("#print-reload").addEventListener("click", loadPrinters);
     $("#print-go").addEventListener("click", () => {
       const f = $("#print-file").files[0];
@@ -658,14 +794,19 @@
     $("#scan-status").addEventListener("click", refreshScannerStatus);
     $("#scan-print").addEventListener("click", printScan);
     $("#scan-dl-all").addEventListener("click", async () => {
-      for (const [i, p] of (state.scanPages || []).entries()) {
-        await savePage(p, i);
-      }
+      for (let i = 0; i < state.scanPages.length; i++) await savePage(i);
     });
 
     $("#dev-refresh").addEventListener("click", loadDevices);
     $("#jobs-refresh").addEventListener("click", loadJobs);
     $("#diag-run").addEventListener("click", runDiagnose);
+
+    $("#conn-mode").addEventListener("change", async () => {
+      state.mode = $("#conn-mode").value;
+      localStorage.setItem(LS_MODE, state.mode);
+      await rebootApp();
+      msg("#conn-out", "ok", state.active === "bridge" ? "Läuft über den lokalen Helfer." : "Läuft über die Warteschlange.");
+    });
 
     $("#conn-save").addEventListener("click", async () => {
       state.url = $("#conn-url").value.trim().replace(/\/$/, "");
@@ -675,10 +816,11 @@
       const ok = await detectBridge(true);
       if (ok) {
         msg("#conn-out", "ok", `Verbunden mit ${state.url}.`);
-        booted = false;
-        await bootApp();
+        state.mode = "auto";
+        localStorage.setItem(LS_MODE, "auto");
+        await rebootApp();
       } else if (state.bridgeIssue === "token") {
-        msg("#conn-out", "err", "Der Helfer läuft, akzeptiert dieses Token aber nicht.", 'Aktuelles Token anzeigen: <code>cat ~/.roots-print/token</code>');
+        msg("#conn-out", "err", "Der Helfer läuft, akzeptiert dieses Token aber nicht.", "Aktuelles Token anzeigen: <code>cat ~/.roots-print/token</code>");
       } else {
         const kind = location.protocol === "https:" ? "blocked" : "offline";
         msg("#conn-out", "err", `Unter ${esc(state.url)} antwortet kein Helfer.`, NETWORK_HINTS[kind].hint);
@@ -689,6 +831,20 @@
       state.token = "";
       $("#conn-token").value = "";
       msg("#conn-out", "info", "Token gelöscht.");
+    });
+
+    $("#agent-add").addEventListener("click", async () => {
+      const name = $("#agent-name").value.trim();
+      const hash = $("#agent-hash").value.trim();
+      if (!/^[0-9a-f]{64}$/i.test(hash)) return msg("#agent-out", "err", "Der Hash muss 64 Hex-Zeichen haben.", "Auf dem Büro-Rechner anzeigen: <code>node bridge/roots-print-agent.js --hash</code>");
+      try {
+        await relay().registerAgent(name, hash);
+        msg("#agent-out", "ok", "Agent freigeschaltet.", "Er meldet sich innerhalb einer Minute mit seinen Druckern.");
+        $("#agent-hash").value = "";
+        loadDevices();
+      } catch (e) {
+        showError("#agent-out", e);
+      }
     });
 
     $("#modal-close").addEventListener("click", () => $("#modal").classList.add("hidden"));
@@ -702,6 +858,6 @@
 
   document.addEventListener("DOMContentLoaded", () => {
     wire();
-    bootAuth().catch((e) => msg("#gate-msg", "err", "Supabase ist nicht erreichbar.", "Netzverbindung prüfen und Seite neu laden."));
+    bootAuth().catch(() => msg("#gate-msg", "err", "Supabase ist nicht erreichbar.", "Netzverbindung prüfen und Seite neu laden."));
   });
 })();
