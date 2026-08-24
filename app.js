@@ -42,6 +42,15 @@
     },
   };
 
+  const IN_IFRAME = window.parent !== window;
+  const INTRANET_ORIGIN = "https://pgoutzeris-stack.github.io";
+
+  /** In the Tauri app and in the intranet iframe, only the intranet may open URLs. */
+  function openExternalUrl(url) {
+    if (IN_IFRAME) window.parent.postMessage({ type: "roots-open-url", url }, INTRANET_ORIGIN);
+    else window.open(url, "_blank", "noopener,noreferrer");
+  }
+
   function msg(target, kind, message, hint) {
     const el = typeof target === "string" ? $(target) : target;
     if (!el) return;
@@ -127,6 +136,10 @@
     pill.innerHTML = '<i class="fa-solid fa-circle-xmark"></i> Helfer offline';
     const kind = location.protocol === "https:" ? "blocked" : "offline";
     msg("#banner", "err", NETWORK_HINTS[kind].message, NETWORK_HINTS[kind].hint);
+    if (kind === "blocked") {
+      $("#banner").insertAdjacentHTML("beforeend", `<button class="btn sm" id="open-local"><i class="fa-solid fa-arrow-up-right-from-square"></i> ${esc(state.url)} öffnen</button>`);
+      $("#open-local").addEventListener("click", () => openExternalUrl(state.url + "/"));
+    }
     return false;
   }
 
