@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ROOTS Drucken</title>
+<link rel="stylesheet" href="https://fonts.cdnfonts.com/css/circular-std">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.8/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+<style>
+:root{
+  --brand:#206efb; --brand-dark:#1a58c9; --ink:#0f172a; --muted:#475569;
+  --line:#e2e8f0; --bg:#f6f8fc; --card:#fff; --ok:#0f9d58; --warn:#b45309; --err:#dc2626;
+  --radius:14px; --shadow:0 12px 32px rgba(15,23,42,.08);
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:'Circular Std',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--ink);font-size:15px}
+button{font-family:inherit}
+.app{display:grid;grid-template-columns:248px 1fr;min-height:100vh}
+aside{background:var(--card);border-right:1px solid var(--line);padding:20px 16px;display:flex;flex-direction:column;gap:22px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:1.02rem}
+.brand i{color:var(--brand)}
+nav{display:flex;flex-direction:column;gap:4px}
+nav button{display:flex;align-items:center;gap:10px;background:none;border:0;text-align:left;padding:10px 12px;border-radius:10px;color:var(--muted);font-size:.9rem;cursor:pointer}
+nav button i{width:18px;text-align:center}
+nav button:hover{background:#f1f5f9;color:var(--ink)}
+nav button.active{background:#eff6ff;color:var(--brand);font-weight:600}
+.side-foot{margin-top:auto;display:flex;flex-direction:column;gap:8px;font-size:.78rem;color:var(--muted)}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-size:.74rem;font-weight:600;border:1px solid var(--line);background:#f8fafc}
+.pill.ok{color:var(--ok);border-color:#bbf7d0;background:#f0fdf4}
+.pill.err{color:var(--err);border-color:#fecaca;background:#fef2f2}
+.pill.warn{color:var(--warn);border-color:#fde68a;background:#fffbeb}
+main{padding:26px 30px 60px;max-width:1180px}
+h1{font-size:1.42rem;margin:0 0 4px}
+h2{font-size:1.03rem;margin:0 0 12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow);margin-bottom:18px}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
+label{display:block;font-size:.78rem;font-weight:600;color:var(--muted);margin-bottom:5px}
+select,input[type=text],input[type=password],input[type=email],input[type=number]{width:100%;height:40px;padding:0 11px;border:1px solid var(--line);border-radius:10px;font-family:inherit;font-size:.88rem;background:#fff;color:var(--ink)}
+input[type=file]{width:100%;font-size:.85rem}
+.btn{height:42px;padding:0 18px;border:0;border-radius:999px;background:var(--brand);color:#fff;font-weight:600;font-size:.88rem;cursor:pointer;display:inline-flex;align-items:center;gap:8px}
+.btn:hover{background:var(--brand-dark)}
+.btn[disabled]{opacity:.5;cursor:not-allowed}
+.btn.ghost{background:none;color:var(--ink);border:1px solid var(--line)}
+.btn.ghost:hover{background:#f1f5f9}
+.btn.sm{height:34px;padding:0 14px;font-size:.8rem}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+table{width:100%;border-collapse:collapse;font-size:.86rem}
+th,td{text-align:left;padding:9px 8px;border-bottom:1px solid var(--line)}
+th{font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+.pages{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-top:14px}
+.page{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#fff;display:flex;flex-direction:column}
+.page .thumb{height:170px;display:flex;align-items:center;justify-content:center;background:#f1f5f9;cursor:pointer;overflow:hidden}
+.page .thumb img{max-width:100%;max-height:100%}
+.page .thumb i{font-size:2rem;color:#94a3b8}
+.page .meta{padding:8px 10px;font-size:.76rem;color:var(--muted);display:flex;justify-content:space-between;align-items:center;gap:6px}
+.page .meta a{color:var(--brand);text-decoration:none;font-weight:600}
+.msg{border-radius:12px;padding:13px 15px;font-size:.86rem;margin-bottom:14px;display:flex;gap:10px;align-items:flex-start}
+.msg i{margin-top:2px}
+.msg.err{background:#fef2f2;border:1px solid #fecaca;color:#7f1d1d}
+.msg.ok{background:#f0fdf4;border:1px solid #bbf7d0;color:#14532d}
+.msg.info{background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a}
+.msg .hint{display:block;margin-top:5px;font-weight:400;opacity:.9}
+.msg code{background:rgba(15,23,42,.07);padding:1px 5px;border-radius:5px;font-size:.8rem}
+.gate{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+.gate .card{max-width:400px;width:100%;margin:0}
+.hidden{display:none!important}
+.spin{animation:sp 1s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.check{display:flex;gap:10px;padding:11px 0;border-bottom:1px solid var(--line);font-size:.86rem}
+.check:last-child{border-bottom:0}
+.check .ico{width:20px;text-align:center}
+.check .ico.ok{color:var(--ok)}
+.check .ico.bad{color:var(--err)}
+.check .body{flex:1}
+.check .detail{color:var(--muted);font-size:.8rem;margin-top:2px}
+.check .fix{color:var(--warn);font-size:.8rem;margin-top:3px}
+.modal{position:fixed;inset:0;background:rgba(15,23,42,.62);display:flex;align-items:center;justify-content:center;padding:24px;z-index:60}
+.modal .inner{background:#fff;border-radius:16px;max-width:min(900px,100%);width:100%;max-height:90vh;display:flex;flex-direction:column;overflow:hidden}
+.modal header{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line);font-weight:700}
+.modal .content{flex:1;overflow:auto;background:#f1f5f9;display:flex;align-items:center;justify-content:center;min-height:340px}
+.modal .content img,.modal .content iframe{max-width:100%;max-height:82vh;width:100%;border:0}
+.modal footer{padding:12px 18px;border-top:1px solid var(--line);display:flex;gap:10px;justify-content:flex-end}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.8rem}
+@media (max-width:860px){.app{grid-template-columns:1fr}aside{border-right:0;border-bottom:1px solid var(--line)}nav{flex-direction:row;overflow-x:auto}main{padding:20px 16px 50px}}
+</style>
+</head>
+<body>
+
+<div id="gate" class="gate">
+  <div class="card">
+    <div class="brand" style="margin-bottom:16px"><i class="fa-solid fa-print"></i> ROOTS Drucken</div>
+    <div id="gate-msg"></div>
+    <form id="login-form">
+      <div style="margin-bottom:12px">
+        <label for="gate-email">E-Mail</label>
+        <input id="gate-email" type="email" autocomplete="username" required>
+      </div>
+      <div style="margin-bottom:16px">
+        <label for="gate-pw">Passwort</label>
+        <input id="gate-pw" type="password" autocomplete="current-password" required>
+      </div>
+      <button class="btn" style="width:100%;justify-content:center" type="submit"><i class="fa-solid fa-arrow-right-to-bracket"></i> Anmelden</button>
+    </form>
+  </div>
+</div>
+
+<div id="app" class="app hidden">
+  <aside>
+    <div class="brand"><i class="fa-solid fa-print"></i> ROOTS Drucken</div>
+    <nav>
+      <button data-view="print" class="active"><i class="fa-solid fa-file-arrow-up"></i> Drucken</button>
+      <button data-view="scan"><i class="fa-solid fa-image"></i> Scannen</button>
+      <button data-view="devices"><i class="fa-solid fa-network-wired"></i> Geräte</button>
+      <button data-view="jobs"><i class="fa-solid fa-list-check"></i> Aufträge</button>
+      <button data-view="diagnose"><i class="fa-solid fa-stethoscope"></i> Diagnose</button>
+      <button data-view="connection"><i class="fa-solid fa-plug"></i> Verbindung</button>
+    </nav>
+    <div class="side-foot">
+      <span id="bridge-pill" class="pill"><i class="fa-solid fa-circle-notch spin"></i> Helfer wird gesucht</span>
+      <span id="user-pill" class="pill"></span>
+      <button id="logout" class="btn ghost sm" style="justify-content:center"><i class="fa-solid fa-arrow-right-from-bracket"></i> Abmelden</button>
+    </div>
+  </aside>
+
+  <main>
+    <div id="banner"></div>
+
+    <section data-panel="print">
+      <h1>Drucken</h1>
+      <div class="card">
+        <h2>Datei</h2>
+        <input type="file" id="print-file" accept=".pdf,.jpg,.jpeg,.png,.txt,.ps">
+        <div class="grid2" style="margin-top:16px">
+          <div><label for="print-queue">Drucker</label><select id="print-queue"></select></div>
+          <div><label for="print-copies">Kopien</label><input id="print-copies" type="number" min="1" max="99" value="1"></div>
+        </div>
+        <div class="grid2" id="print-options" style="margin-top:14px"></div>
+        <div class="row" style="margin-top:18px">
+          <button class="btn" id="print-go"><i class="fa-solid fa-print"></i> Drucken</button>
+          <button class="btn ghost" id="print-reload"><i class="fa-solid fa-rotate"></i> Optionen neu laden</button>
+        </div>
+        <div id="print-result" style="margin-top:14px"></div>
+      </div>
+    </section>
+
+    <section data-panel="scan" class="hidden">
+      <h1>Scannen</h1>
+      <div class="card">
+        <div class="grid2">
+          <div><label for="scan-host">Scanner</label><select id="scan-host"></select></div>
+          <div><label for="scan-source">Vorlage</label><select id="scan-source"></select></div>
+          <div><label for="scan-color">Farbe</label><select id="scan-color"></select></div>
+          <div><label for="scan-res">Auflösung</label><select id="scan-res"></select></div>
+          <div><label for="scan-format">Format</label><select id="scan-format"></select></div>
+          <div><label for="scan-intent">Vorlagenart</label><select id="scan-intent"></select></div>
+          <div><label for="scan-size">Scanbereich</label><select id="scan-size"></select></div>
+          <div><label for="scan-duplex">Beidseitig</label><select id="scan-duplex"><option value="0">Nein</option><option value="1">Ja</option></select></div>
+        </div>
+        <div class="row" style="margin-top:18px">
+          <button class="btn" id="scan-go"><i class="fa-solid fa-play"></i> Scan starten</button>
+          <button class="btn ghost" id="scan-status"><i class="fa-solid fa-rotate"></i> Gerätestatus</button>
+          <span id="scan-adf" class="pill"></span>
+        </div>
+        <div id="scan-result" style="margin-top:14px"></div>
+        <div id="scan-actions" class="row hidden" style="margin-top:14px">
+          <button class="btn ghost sm" id="scan-dl-all"><i class="fa-solid fa-download"></i> Alle Seiten herunterladen</button>
+          <button class="btn ghost sm" id="scan-print"><i class="fa-solid fa-print"></i> Scan drucken</button>
+        </div>
+        <div class="pages" id="scan-pages"></div>
+      </div>
+    </section>
+
+    <section data-panel="devices" class="hidden">
+      <h1>Geräte</h1>
+      <div class="card">
+        <div class="row" style="margin-bottom:14px">
+          <button class="btn ghost sm" id="dev-refresh"><i class="fa-solid fa-rotate"></i> Netz durchsuchen</button>
+          <span id="dev-ssid" class="pill"></span>
+        </div>
+        <h2>Warteschlangen auf diesem Mac</h2>
+        <table id="queue-table"><thead><tr><th>Warteschlange</th><th>Status</th><th>Anschluss</th></tr></thead><tbody></tbody></table>
+        <h2 style="margin-top:22px">AirPrint im Netz</h2>
+        <table id="dev-table"><thead><tr><th>Gerät</th><th>Host</th><th>Kann</th><th>Webinterface</th></tr></thead><tbody></tbody></table>
+      </div>
+    </section>
+
+    <section data-panel="jobs" class="hidden">
+      <h1>Aufträge</h1>
+      <div class="card">
+        <div class="row" style="margin-bottom:12px">
+          <button class="btn ghost sm" id="jobs-refresh"><i class="fa-solid fa-rotate"></i> Aktualisieren</button>
+        </div>
+        <table id="jobs-table"><thead><tr><th>Auftrag</th><th>Nutzer</th><th>Größe</th></tr></thead><tbody></tbody></table>
+      </div>
+    </section>
+
+    <section data-panel="diagnose" class="hidden">
+      <h1>Diagnose</h1>
+      <div class="card">
+        <div class="row" style="margin-bottom:12px">
+          <button class="btn" id="diag-run"><i class="fa-solid fa-stethoscope"></i> Prüfung starten</button>
+        </div>
+        <div id="diag-out"></div>
+      </div>
+    </section>
+
+    <section data-panel="connection" class="hidden">
+      <h1>Verbindung</h1>
+      <div class="card">
+        <h2>Helfer</h2>
+        <div class="grid2">
+          <div><label for="conn-url">Adresse</label><input id="conn-url" type="text" value="http://127.0.0.1:7331"></div>
+          <div><label for="conn-token">Token</label><input id="conn-token" type="password" placeholder="aus ~/.roots-print/token"></div>
+        </div>
+        <div class="row" style="margin-top:16px">
+          <button class="btn" id="conn-save"><i class="fa-solid fa-plug"></i> Verbinden</button>
+          <button class="btn ghost" id="conn-forget"><i class="fa-solid fa-trash"></i> Token löschen</button>
+        </div>
+        <div id="conn-out" style="margin-top:14px"></div>
+      </div>
+      <div class="card">
+        <h2>Helfer starten</h2>
+        <p style="font-size:.86rem;color:var(--muted);margin:0 0 10px">Der Browser kann AirPrint-Geräte nicht direkt ansprechen. Der Helfer läuft auf dem eigenen Mac, hört nur auf 127.0.0.1 und verlangt das Token.</p>
+        <pre class="mono" style="background:#0f172a;color:#e2e8f0;padding:14px;border-radius:12px;overflow:auto">git clone https://github.com/pgoutzeris-stack/drucken.git
+cd drucken
+node bridge/roots-print-bridge.js</pre>
+        <p style="font-size:.86rem;color:var(--muted);margin:10px 0 0">Dauerhaft im Hintergrund: <code class="mono">bash bridge/install.sh</code></p>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div id="modal" class="modal hidden">
+  <div class="inner">
+    <header><span id="modal-title">Vorschau</span><button class="btn ghost sm" id="modal-close"><i class="fa-solid fa-xmark"></i></button></header>
+    <div class="content" id="modal-content"></div>
+    <footer><a id="modal-dl" class="btn sm" download><i class="fa-solid fa-download"></i> Herunterladen</a></footer>
+  </div>
+</div>
+
+<script src="app.js?v=1"></script>
+<script src="https://pgoutzeris-stack.github.io/ROOTS_Intranet/roots-user-bridge.js"></script>
+</body>
+</html>
