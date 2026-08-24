@@ -15,6 +15,18 @@ Auftragsliste und Netzdiagnose.
   ROOTS-Kontos ab und spricht Supabase selbst. Zugelassen sind nur Adressen der
   Domänen `roots-consultants.com` und `roots-consultants.de`.
 
+## Statusanzeige
+
+Die Pills in der Seitenleiste zeigen Drucker, Netz und aktiven Weg. Sie entstehen
+ausschließlich aus passiven Quellen: der Bonjour-Ankündigung des Geräts, einem
+vorhandenen ARP-Eintrag und dem, was der Agent gemeldet hat. Ein Ping oder ein
+Aufruf an IPP oder eSCL weckt einen schlafenden Drucker — er fährt hoch und macht
+Geräusche. Deshalb passiert das nur, wenn jemand ausdrücklich „Gerät ansprechen"
+klickt oder einen Auftrag abschickt.
+
+Ist die Drucker-Pill gelb, schläft das Gerät. Das ist kein Fehler: es wacht beim
+ersten Auftrag von selbst auf.
+
 ## Zwei Wege zum Gerät
 
 Ein Browser erreicht einen AirPrint-Drucker nicht direkt: die Seite läuft über
