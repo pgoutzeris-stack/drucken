@@ -42,6 +42,14 @@ Agentseite (Token statt Sitzung): `print_agent_hello`, `print_agent_next_job`
 - `print.cleanup(3)` löscht Aufträge samt Seiten nach drei Tagen, geplant als
   `pg_cron`-Job `print-cleanup` um 03:17 UTC.
 
+## Rechte
+
+`EXECUTE` wird von Postgres standardmäßig an `PUBLIC` vergeben. Die
+Nutzerfunktionen sind deshalb ausdrücklich für `public` und `anon` entzogen —
+geprüft: ein Aufruf mit dem Anon-Key antwortet mit `42501 permission denied`. Die
+vier Agentfunktionen bleiben für `anon` offen, weil der Agent keine Sitzung hat;
+ohne gültiges Token liefern sie nur eine Fehlermeldung.
+
 ## Warum bytea und nicht Storage
 
 Der Agent authentifiziert sich mit einem eigenen Token, nicht mit einem
