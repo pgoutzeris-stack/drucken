@@ -7,8 +7,17 @@
 <link rel="stylesheet" href="https://fonts.cdnfonts.com/css/circular-std">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.8/dist/umd/supabase.js"></script>
+<script>
+  // Im Intranet laeuft dieses Tool in einem sandboxed iframe und bekommt deshalb
+  // keine eigene Supabase-Sitzung. Wie die anderen sandboxed Tools arbeitet es
+  // dann tokenlos: das Intranet fuehrt die Anfragen mit der Sitzung des Nutzers
+  // aus. Die Kennzeichnung muss vor roots-user-bridge.js gesetzt sein.
+  if (window.self !== window.top && new URLSearchParams(window.location.search).get('authBroker') === 'v1') {
+    window.ROOTS_TOKENLESS_EMBED = true;
+  }
+</script>
 <script src="config.js"></script>
-<script src="relay.js?v=1"></script>
+<script src="relay.js?v=2"></script>
 <style>
 :root{
   --brand:#206efb; --brand-dark:#1a58c9; --ink:#0f172a; --muted:#475569;
@@ -220,7 +229,7 @@ th{font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;color:var(--mu
         </div>
       </div>
 
-      <div class="card">
+      <div class="card" id="conn-local">
         <h2>Lokaler Helfer</h2>
         <div class="grid2">
           <div><label for="conn-url">Adresse</label><input id="conn-url" type="text" value="http://127.0.0.1:7331"></div>
@@ -265,7 +274,7 @@ node bridge/roots-print-bridge.js</pre>
   </div>
 </div>
 
-<script src="app.js?v=4"></script>
-<script src="https://pgoutzeris-stack.github.io/ROOTS_Intranet/roots-user-bridge.js"></script>
+<script src="app.js?v=5"></script>
+<script src="https://pgoutzeris-stack.github.io/ROOTS_Intranet/roots-user-bridge.js?v=20260728-identity-guard-v1"></script>
 </body>
 </html>

@@ -10,11 +10,29 @@ window.RootsPrintRelay = (function () {
   "use strict";
 
   let sb = null;
+  let brokered = false;
 
   const AGENT_STALE_MS = 5 * 60 * 1000;
 
+  /** Mit Sitzung: direkte Aufrufe. Tokenlos im iframe: ueber den Intranet-Broker. */
   function use(client) {
     sb = client;
+    brokered = false;
+  }
+
+  function useBroker() {
+    sb = null;
+    brokered = true;
+  }
+
+  async function broker(payload) {
+    const request = window.RootsUserBridge?.request;
+    if (!request) throw fail("Die Intranet-Brücke ist nicht geladen.", "Seite im Intranet neu laden.");
+    try {
+      return await request("print", payload);
+    } catch (e) {
+      throw translate(e);
+    }
   }
 
   function fail(message, hint) {
@@ -30,6 +48,10 @@ window.RootsPrintRelay = (function () {
     if (/Drucker unbekannt|Scanner unbekannt/i.test(raw)) return fail("Dieser Drucker ist nicht mehr gemeldet.", "Liste neu laden. Läuft der Agent im Büro noch?");
     if (/groesser als|größer als/i.test(raw)) return fail("Die Datei ist größer als 25 MB.", "Über den Relay sind 25 MB die Grenze. Größere Dateien direkt am Helfer drucken.");
     if (/Nur Admins/i.test(raw)) return fail("Nur Admins dürfen Agenten freischalten.");
+    if (/Bruecke ist nicht geladen|Brücke ist nicht geladen/i.test(raw)) return fail("Die Intranet-Brücke ist nicht geladen.", "Seite im Intranet neu laden.");
+    if (/zu lange gedauert/i.test(raw)) return fail("Das Intranet hat nicht rechtzeitig geantwortet.", "Erneut versuchen. Bei Scans mit vielen Seiten kann es dauern.");
+    if (/Tool-Session ist veraltet|Identitaet|Identität/i.test(raw)) return fail("Die Sitzung des Intranets ist veraltet.", "Im Intranet neu laden, danach das Tool erneut öffnen.");
+    if (/Nicht angemeldet/i.test(raw)) return fail("Das Intranet meldet keine Anmeldung.", "Im Intranet neu anmelden.");
     if (/Failed to fetch|NetworkError/i.test(raw)) return fail("Supabase ist nicht erreichbar.", "Netzverbindung prüfen und erneut versuchen.");
     return fail(raw || "Unbekannter Fehler in der Warteschlange.");
   }
@@ -41,8 +63,14 @@ window.RootsPrintRelay = (function () {
   }
 
   async function printers() {
-    const { data, error } = await sb.from("print_printers").select("*").order("display_name");
-    if (error) throw translate(error);
+    let data;
+    if (brokered) {
+      data = (await broker({ op: "printers" })).printers;
+    } else {
+      const res = await sb.from("print_printers").select("*").order("display_name");
+      if (res.error) throw translate(res.error);
+      data = res.data;
+    }
     const agents = await agentList();
     const fresh = new Map(agents.map((a) => [a.id, a]));
     return (data || []).map((p) => {
@@ -54,6 +82,7 @@ window.RootsPrintRelay = (function () {
 
   async function agentList() {
     try {
+      if (brokered) return (await broker({ op: "agents" })).agents || [];
       return (await rpc("print_list_agents", {})) || [];
     } catch (e) {
       return [];
@@ -62,14 +91,24 @@ window.RootsPrintRelay = (function () {
 
   async function submitPrint(printerId, file, filename, settings) {
     const data = await blobToBase64(file);
+    if (brokered) return (await broker({ op: "submit_print", printerId, filename, data, settings: settings || {} })).jobId;
     return rpc("print_submit_print_job", { p_printer_id: printerId, p_filename: filename, p_data: data, p_settings: settings || {} });
   }
 
   async function submitScan(printerId, settings) {
+    if (brokered) return (await broker({ op: "submit_scan", printerId, settings: settings || {} })).jobId;
     return rpc("print_submit_scan_job", { p_printer_id: printerId, p_settings: settings || {} });
   }
 
+  async function jobs() {
+    if (brokered) return (await broker({ op: "jobs" })).jobs || [];
+    const { data, error } = await sb.from("print_jobs").select("*").order("created_at", { ascending: false }).limit(25);
+    if (error) throw translate(error);
+    return data || [];
+  }
+
   async function job(jobId) {
+    if (brokered) return (await broker({ op: "job", jobId })).job;
     const { data, error } = await sb.from("print_jobs").select("*").eq("id", jobId).maybeSingle();
     if (error) throw translate(error);
     if (!data) throw fail("Dieser Auftrag ist nicht mehr da.", "Aufträge werden nach drei Tagen gelöscht.");
@@ -97,7 +136,7 @@ window.RootsPrintRelay = (function () {
   }
 
   async function pageBlob(page) {
-    const b64 = await rpc("print_job_page", { p_page_id: page.id });
+    const b64 = brokered ? (await broker({ op: "page", pageId: page.id })).data : await rpc("print_job_page", { p_page_id: page.id });
     const bin = atob(b64);
     const bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
@@ -105,7 +144,9 @@ window.RootsPrintRelay = (function () {
   }
 
   async function registerAgent(name, tokenHash) {
-    return rpc("print_register_agent", { p_name: name, p_token_hash: String(tokenHash || "").trim().toLowerCase() });
+    const hash = String(tokenHash || "").trim().toLowerCase();
+    if (brokered) return (await broker({ op: "register_agent", name, tokenHash: hash })).agentId;
+    return rpc("print_register_agent", { p_name: name, p_token_hash: hash });
   }
 
   function blobToBase64(blob) {
@@ -117,5 +158,5 @@ window.RootsPrintRelay = (function () {
     });
   }
 
-  return { use, printers, agentList, submitPrint, submitScan, job, waitFor, pageBlob, registerAgent, AGENT_STALE_MS };
+  return { use, useBroker, printers, agentList, submitPrint, submitScan, jobs, job, waitFor, pageBlob, registerAgent, AGENT_STALE_MS };
 })();

@@ -5,10 +5,15 @@ Treiberoptionen aus CUPS, Scannen über AirScan/eSCL mit Vorschau und Download,
 Auftragsliste und Netzdiagnose.
 
 - Oberfläche: https://pgoutzeris-stack.github.io/drucken/
-- Zugang: Im Intranet übergibt `roots-user-bridge.js` die Sitzung (Aufruf mit
-  `?authBroker=v1`, kein zweites Login). Direkt geöffnet fragt das Tool E-Mail und
-  Passwort des ROOTS-Kontos ab. Zugelassen sind nur Adressen der Domänen
-  `roots-consultants.com` und `roots-consultants.de`.
+- Zugang: Im Intranet läuft die Kachel in einem sandboxed iframe und arbeitet
+  deshalb **tokenlos über den Intranet-Broker** — wie Team-Kalender, Notes-Tool
+  und SOP-Tool: `window.ROOTS_TOKENLESS_EMBED = true`, Identität aus
+  `roots-broker-context-ready`, alle Datenbankaufrufe über
+  `RootsUserBridge.request('print', …)`. Das Intranet führt sie mit der Sitzung des
+  angemeldeten Nutzers aus, also greift dieselbe RLS. Kein zweites Login.
+  Direkt geöffnet (ohne iframe) fragt das Tool E-Mail und Passwort des
+  ROOTS-Kontos ab und spricht Supabase selbst. Zugelassen sind nur Adressen der
+  Domänen `roots-consultants.com` und `roots-consultants.de`.
 
 ## Zwei Wege zum Gerät
 
@@ -147,7 +152,7 @@ eingesetzt. Anderer Port: `ROOTS_PRINT_PORT=7332 node bridge/roots-print-bridge.
 
 | Ebene | Prüfung |
 |---|---|
-| Oberfläche | Im Intranet die übergebene Supabase-Sitzung, sonst eigene Anmeldung |
+| Oberfläche | Im Intranet der Broker mit der Sitzung des Nutzers, sonst eigene Anmeldung |
 | Konto | E-Mail-Domäne muss in `ALLOWED_EMAIL_DOMAINS` stehen |
 | Warteschlange | RLS: jeder sieht nur eigene Aufträge und Seiten; Einstellen nur mit Profil im Intranet |
 | Agent | Eigenes Token, Hash liegt in `print.agents`; Freischalten nur mit `app_role = 'admin'` |
@@ -171,6 +176,8 @@ werden nach drei Tagen gelöscht (`print.cleanup`, nachts per `pg_cron`).
 | Scanner ist beschäftigt | Auftrag läuft am Gerät | Warten, Display am Gerät prüfen |
 | Warteschlange nimmt keine Aufträge an | Drucker pausiert | `cupsenable <Warteschlange>` |
 | Dieses Konto hat kein Profil im Intranet | Konto ohne `profiles`-Zeile | Admin legt das Profil im Intranet an |
+| Das Intranet hat keine Anmeldung übergeben | Brücke nicht geladen oder Sitzung veraltet | Im Intranet neu laden; dort muss `roots-user-bridge.js` laden |
+| Die Sitzung des Intranets ist veraltet | Nach Abmelden/Anmelden im Intranet | Intranet neu laden, Kachel erneut öffnen |
 
 ## Getestet gegen
 

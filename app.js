@@ -139,6 +139,11 @@
    * antwortet, greift der lokale Helfer als Rückfall.
    */
   async function pickMode() {
+    if (TOKENLESS) {
+      // Im sandboxed iframe ist 127.0.0.1 ohnehin nicht erreichbar.
+      state.active = "relay";
+      return;
+    }
     if (state.mode === "relay") {
       state.active = "relay";
       return;
@@ -610,8 +615,7 @@
         body.innerHTML = jobs.length ? jobs.map((j) => `<tr><td class="mono">${esc(j.id)}</td><td>${esc(j.user || "—")}</td><td>${j.size ? bytes(j.size) : "—"}</td><td>im Drucker</td></tr>`).join("") : `<tr><td colspan="4">Keine offenen Aufträge.</td></tr>`;
         return;
       }
-      const { data, error } = await window.__rootsSupabaseClient.from("print_jobs").select("*").order("created_at", { ascending: false }).limit(25);
-      if (error) throw error;
+      const data = await relay().jobs();
       const label = { queued: "wartet", claimed: "übernommen", running: "läuft", done: "fertig", error: "Fehler" };
       const cls = { queued: "warn", claimed: "warn", running: "warn", done: "ok", error: "err" };
       body.innerHTML = (data || []).length
@@ -675,6 +679,9 @@
   let sb = null;
   const IN_IFRAME = window.parent !== window;
   const EMBEDDED = IN_IFRAME || new URLSearchParams(location.search).has("authBroker");
+  // Sandboxed iframes bekommen vom Intranet keine Sitzung. Dann laufen alle
+  // Anfragen ueber den Broker, genau wie bei Team-Kalender, Notes und SOP-Tool.
+  const TOKENLESS = window.ROOTS_TOKENLESS_EMBED === true;
 
   function domainAllowed(email) {
     const dom = String(email || "").split("@")[1] || "";
@@ -682,6 +689,24 @@
   }
 
   async function bootAuth() {
+    if (TOKENLESS) {
+      $("#login-form").classList.add("hidden");
+      msg("#gate-msg", "info", "Anmeldung wird vom Intranet übernommen…");
+      relay().useBroker();
+      // Das Intranet meldet die Identität, sobald die Brücke sie bestätigt hat.
+      window.addEventListener("roots-broker-context-ready", (e) => applyBrokerContext(e.detail));
+      window.addEventListener("roots-auth-signed-out", () => {
+        booted = false;
+        msg("#gate-msg", "err", "Die Sitzung des Intranets ist beendet.", "Im Intranet neu anmelden, danach das Tool erneut öffnen.");
+        showGate(true);
+      });
+      setTimeout(() => {
+        if (!$("#app").classList.contains("hidden")) return;
+        msg("#gate-msg", "err", "Das Intranet hat keine Anmeldung übergeben.", "Im Intranet neu laden. Bleibt es dabei, ist <code>roots-user-bridge.js</code> nicht geladen.");
+      }, 9000);
+      return;
+    }
+
     sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY);
     // roots-user-bridge.js greift den Client hier ab und setzt die Sitzung, die
     // das Intranet übergibt — wie in den anderen ROOTS-Tools.
@@ -731,6 +756,26 @@
     bootApp();
   }
 
+  /** Tokenloser Weg: Identität und Rolle kommen aus der Broker-Antwort. */
+  function applyBrokerContext(context) {
+    const email = context?.user?.email || context?.profile?.email || "";
+    if (!context?.user?.id) {
+      msg("#gate-msg", "err", "Das Intranet hat keine Anmeldung übergeben.", "Im Intranet neu anmelden.");
+      return showGate(true);
+    }
+    if (!domainAllowed(email)) {
+      msg("#gate-msg", "err", "Dieses Konto gehört nicht zu ROOTS.", "Drucken und Scannen sind auf Adressen der ROOTS-Domänen beschränkt.");
+      return showGate(true);
+    }
+    state.profile = context.profile || null;
+    clear("#gate-msg");
+    $("#gate").classList.add("hidden");
+    $("#app").classList.remove("hidden");
+    $("#user-pill").innerHTML = `<i class="fa-solid fa-user"></i> ${esc(email)}`;
+    $("#agent-admin").classList.toggle("hidden", context.profile?.app_role !== "admin");
+    bootApp();
+  }
+
   async function loadProfile() {
     try {
       const { data } = await sb.from("profiles").select("id, app_role").eq("id", (await sb.auth.getUser()).data.user.id).maybeSingle();
@@ -756,6 +801,11 @@
     $("#conn-url").value = state.url;
     $("#conn-token").value = state.token;
     $("#conn-mode").value = state.mode;
+    if (TOKENLESS) {
+      $("#conn-mode").value = "relay";
+      $("#conn-mode").disabled = true;
+      $("#conn-local").classList.add("hidden");
+    }
     await pickMode();
     renderModePill();
     await loadPrinters();
