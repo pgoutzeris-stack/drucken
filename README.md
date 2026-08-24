@@ -29,7 +29,9 @@ Browser ──HTTPS──► GitHub Pages (Oberfläche, Supabase-Login)
 
 Safari lässt Aufrufe von einer HTTPS-Seite auf `127.0.0.1` nicht zu. Dort das Tool
 direkt über **http://127.0.0.1:7331** öffnen; der Helfer liefert die identischen
-Dateien aus. Chrome und die Tauri-App funktionieren über beide Wege (der Helfer
+Dateien aus. Das Tool zeigt die Adresse in diesem Fall zum Kopieren an — die
+Intranet-Brücke `roots-open-url` lehnt lokale Adressen bewusst ab und öffnet sie
+nicht. Chrome und die Tauri-App funktionieren über beide Wege (der Helfer
 antwortet auf den Private-Network-Preflight).
 
 ## Helfer starten

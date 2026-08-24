@@ -42,15 +42,6 @@
     },
   };
 
-  const IN_IFRAME = window.parent !== window;
-  const INTRANET_ORIGIN = "https://pgoutzeris-stack.github.io";
-
-  /** In the Tauri app and in the intranet iframe, only the intranet may open URLs. */
-  function openExternalUrl(url) {
-    if (IN_IFRAME) window.parent.postMessage({ type: "roots-open-url", url }, INTRANET_ORIGIN);
-    else window.open(url, "_blank", "noopener,noreferrer");
-  }
-
   function msg(target, kind, message, hint) {
     const el = typeof target === "string" ? $(target) : target;
     if (!el) return;
@@ -137,8 +128,20 @@
     const kind = location.protocol === "https:" ? "blocked" : "offline";
     msg("#banner", "err", NETWORK_HINTS[kind].message, NETWORK_HINTS[kind].hint);
     if (kind === "blocked") {
-      $("#banner").insertAdjacentHTML("beforeend", `<button class="btn sm" id="open-local"><i class="fa-solid fa-arrow-up-right-from-square"></i> ${esc(state.url)} öffnen</button>`);
-      $("#open-local").addEventListener("click", () => openExternalUrl(state.url + "/"));
+      // Das Intranet lehnt roots-open-url für 127.0.0.1 ab, deshalb keine
+      // Schaltfläche, sondern die Adresse zum Kopieren.
+      $("#banner").insertAdjacentHTML(
+        "beforeend",
+        `<div class="row"><code class="mono">${esc(state.url)}/</code><button class="btn ghost sm" id="copy-local"><i class="fa-solid fa-copy"></i> Adresse kopieren</button></div>`
+      );
+      $("#copy-local").addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(state.url + "/");
+          $("#copy-local").innerHTML = '<i class="fa-solid fa-check"></i> Kopiert';
+        } catch (e) {
+          $("#copy-local").innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> Adresse manuell eingeben';
+        }
+      });
     }
     return false;
   }
