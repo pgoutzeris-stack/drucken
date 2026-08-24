@@ -62,10 +62,11 @@ Büro läuft dafür nichts außer Router und Drucker.
    Cloud-Maschine anlegen, Konfigurationsdatei herunterladen.
 3. Auf der Cloud-Maschine WireGuard starten, dann prüfen:
    `curl http://192.168.178.21/eSCL/ScannerStatus`
-4. CUPS installieren und `~/.roots-print/agent.json` anlegen — siehe
-   `bridge/agent.example.json`. Mit `printers` überspringt der Agent die
-   mDNS-Suche (die über den Tunnel nicht funktioniert) und legt die
-   CUPS-Warteschlange selbst an (`ipp://<IP>/ipp/print`).
+4. `~/.roots-print/agent.json` anlegen — siehe `bridge/agent.example.json`. Mit
+   `printers` überspringt der Agent die mDNS-Suche (die über den Tunnel nicht
+   funktioniert). Ist keine CUPS-Warteschlange dieses Namens vorhanden, druckt er
+   direkt per IPP an die angegebene Adresse: **kein CUPS, kein Treiber nötig**.
+   Direkt gehen PDF und JPEG — die Formate, die das Gerät selbst meldet.
 5. `node bridge/roots-print-agent.js` starten und den Hash im Tool freischalten.
 
 Was das kostet: eine kleine Maschine (ab etwa 4 € im Monat) und ein Tunnel, der
@@ -126,6 +127,7 @@ eingesetzt. Anderer Port: `ROOTS_PRINT_PORT=7332 node bridge/roots-print-bridge.
 | `index.html`, `app.js`, `config.js` | Oberfläche, beide Wege |
 | `relay.js` | Client für die Warteschlange in Supabase |
 | `bridge/device-lib.js` | Gerätezugriff: CUPS, mDNS, eSCL |
+| `bridge/ipp.js` | Direktdruck per IPP, ohne CUPS und ohne Treiber |
 | `bridge/roots-print-bridge.js` | Lokaler Helfer, HTTP auf 127.0.0.1 |
 | `bridge/roots-print-agent.js` | Agent, arbeitet die Warteschlange ab |
 | `supabase/print-schema.sql` | Schema, Policies und Funktionen |
@@ -150,6 +152,7 @@ werden nach drei Tagen gelöscht (`print.cleanup`, nachts per `pg_cron`).
 | Agent offline | Prozess im Büro läuft nicht | `node bridge/roots-print-agent.js` starten |
 | Kein Drucker gemeldet | Agent nie gelaufen oder nicht freigeschaltet | Hash unter „Agent freischalten“ eintragen |
 | Datei größer als 25 MB | Grenze der Warteschlange | Kleiner exportieren oder über den lokalen Helfer drucken |
+| Gerät nimmt dieses Format nicht direkt an | Direktdruck ohne Treiber | Als PDF oder JPEG exportieren; mit CUPS-Warteschlange gehen auch TXT und PNG |
 | Helfer offline | Lokaler Helfer läuft nicht | Warteschlange nutzen oder Helfer starten |
 | Browser blockiert 127.0.0.1 | Safari mit HTTPS-Seite | Warteschlange nutzen oder `http://127.0.0.1:7331` öffnen |
 | Kein Scanner gemeldet | Drucker schläft, anderes WLAN, AP-Isolation | Gerät wecken, Agent neu starten, Diagnose lesen |
@@ -165,3 +168,8 @@ Optionen aus `lpoptions` gelesen, Druckauftrag über `lp` angenommen (gehalten u
 storniert), Scan über Flachbett und Einzug mit Vorschau und Download — beide Wege,
 lokaler Helfer und Warteschlange. Ein Scan über die Warteschlange brauchte vom
 Einstellen bis „fertig“ 10,7 Sekunden.
+
+Zusätzlich ohne mDNS und ohne CUPS gegen `192.168.178.21` geprüft — der Pfad, den
+ein Agent hinter dem WireGuard-Tunnel nimmt: Scan über die IP (16 KB, `fertig`)
+und Druck direkt per IPP über die Warteschlange (`ipp://192.168.178.21`,
+Auftrag angenommen).

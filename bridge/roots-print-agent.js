@@ -24,6 +24,7 @@ const path = require("path");
 const crypto = require("crypto");
 
 const dev = require("./device-lib.js");
+const ipp = require("./ipp.js");
 
 const VERSION = "1.0.0";
 const STATE_DIR = path.join(os.homedir(), ".roots-print");
@@ -110,6 +111,13 @@ async function rpc(fn, args, { timeout = 120000 } = {}) {
  * findet mDNS nichts. Dann zählt allein, was in agent.json steht: feste
  * Adressen statt Suche.
  */
+const DIRECT_OPTIONS = [
+  { key: "ColorModel", label: "Color Mode", values: ["RGB", "Gray"], current: "RGB" },
+  { key: "Duplex", label: "2-Sided Printing", values: ["None", "DuplexNoTumble", "DuplexTumble"], current: "DuplexNoTumble" },
+  { key: "PageSize", label: "Media Size", values: ["A4", "A5", "B5", "Letter", "Legal"], current: "A4" },
+  { key: "InputSlot", label: "Media Source", values: ["auto", "by-pass-tray", "tray-1"], current: "auto" },
+];
+
 async function staticInventory(entries) {
   const { printers } = await dev.listPrinters().catch(() => ({ printers: [] }));
   const known = new Set(printers.map((p) => p.name));
@@ -121,37 +129,31 @@ async function staticInventory(entries) {
       log("Eintrag in agent.json ohne queue oder host — übersprungen.");
       continue;
     }
-    if (!known.has(queue)) {
-      if (entry.autoCreateQueue === false) {
-        log(`Warteschlange ${queue} fehlt und autoCreateQueue ist aus — übersprungen.`);
-        continue;
+    // Ohne CUPS-Warteschlange druckt der Agent direkt per IPP. Das ist auf einer
+    // Cloud-Maschine der Normalfall: dort ist kein Treiber installiert, und
+    // `lpadmin -m everywhere` scheitert an der Attributantwort dieses Geräts.
+    const direct = entry.direct === true || !known.has(queue);
+    let options = DIRECT_OPTIONS;
+    if (!direct) {
+      try {
+        options = (await dev.printerOptions(queue)).options;
+      } catch (e) {
+        options = DIRECT_OPTIONS;
       }
-      const uri = entry.deviceUri || `ipp://${host}/ipp/print`;
-      const res = await dev.run("lpadmin", ["-p", queue, "-E", "-v", uri, "-m", "everywhere"], { timeout: 30000 });
-      if (res.code !== 0) {
-        log(`Warteschlange ${queue} konnte nicht angelegt werden: ${(res.stderr || res.stdout).trim()}`);
-        continue;
-      }
-      log(`Warteschlange ${queue} angelegt (${uri}).`);
-    }
-    let options = [];
-    try {
-      options = (await dev.printerOptions(queue)).options;
-    } catch (e) {
-      /* Ohne Optionen bleibt der Drucker nutzbar */
     }
     const scanCaps = entry.canScan === false ? null : await dev.scannerCapabilities(host).catch(() => null);
     const live = printers.find((p) => p.name === queue);
     out.push({
       queue,
       display_name: entry.display_name || scanCaps?.makeAndModel || queue,
-      state: live?.state || "unknown",
-      state_text: live?.stateText || "über feste Adresse",
+      state: live?.state || "idle",
+      state_text: live?.stateText || `direkt über ${host}`,
       is_default: !!entry.is_default,
       options,
       scan_host: scanCaps ? host : null,
       can_scan: !!scanCaps,
       scan_caps: scanCaps,
+      print_host: direct ? host : null,
     });
   }
   return out;
@@ -192,10 +194,40 @@ async function inventory() {
 
 /* -------------------------------------------------------------- job work --- */
 
+const DIRECT_MIME = { pdf: "application/pdf", jpg: "image/jpeg", jpeg: "image/jpeg" };
+
+function directTarget(queue) {
+  const entry = (config().printers || []).find((p) => p.queue === queue);
+  if (!entry) return null;
+  return entry.direct === true || entry.host ? String(entry.host) : null;
+}
+
 async function runPrintJob(job) {
   if (!job.queue) throw Object.assign(new Error("Dem Auftrag fehlt eine Warteschlange."), { hint: "Drucker im Tool neu wählen." });
   const data = Buffer.from(job.payload || "", "base64");
   if (!data.length) throw new Error("Der Auftrag enthält keine Datei.");
+
+  const host = directTarget(job.queue);
+  const cupsKnown = (await dev.run("lpstat", ["-p", job.queue])).code === 0;
+  if (host && !cupsKnown) {
+    const settings = job.settings || {};
+    const suffix = String(job.filename || "").split(".").pop().toLowerCase();
+    const mime = DIRECT_MIME[suffix];
+    if (!mime) {
+      throw Object.assign(new Error(`Dieses Gerät nimmt ${suffix ? "." + suffix : "dieses Format"} nicht direkt an.`), {
+        hint: "Ohne Treiber gehen PDF und JPEG. Datei als PDF exportieren.",
+      });
+    }
+    const res = await ipp.printJob(host, {
+      data,
+      mime,
+      jobName: job.filename || "ROOTS Print",
+      copies: settings.copies,
+      options: settings.options || {},
+      user: (job.requested_email || "roots-print").split("@")[0],
+    });
+    return { jobId: res.jobId, bytes: data.length, via: `ipp://${host}` };
+  }
   const name = String(job.filename || "druck.bin").replace(/[^A-Za-z0-9._-]/g, "_").slice(-80);
   const tmp = path.join(os.tmpdir(), `roots-print-${Date.now()}-${name}`);
   fs.writeFileSync(tmp, data, { mode: 0o600 });
