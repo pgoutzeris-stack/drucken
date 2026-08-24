@@ -9,15 +9,23 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.8/dist/umd/supabase.js"></script>
 <script>
   // Im Intranet laeuft dieses Tool in einem sandboxed iframe und bekommt deshalb
-  // keine eigene Supabase-Sitzung. Wie die anderen sandboxed Tools arbeitet es
-  // dann tokenlos: das Intranet fuehrt die Anfragen mit der Sitzung des Nutzers
-  // aus. Die Kennzeichnung muss vor roots-user-bridge.js gesetzt sein.
-  if (window.self !== window.top && new URLSearchParams(window.location.search).get('authBroker') === 'v1') {
-    window.ROOTS_TOKENLESS_EMBED = true;
+  // keine eigene Supabase-Sitzung. Wie Notes-Tool, Team-Kalender und SOP-Tool
+  // arbeitet es dann tokenlos: das Intranet fuehrt die Anfragen mit der Sitzung
+  // des Nutzers aus. Die Kennzeichnung muss vor roots-user-bridge.js stehen.
+  try {
+    if (window.self !== window.top) {
+      document.documentElement.classList.add('in-iframe');
+      if (new URLSearchParams(window.location.search).get('authBroker') === 'v1') {
+        window.ROOTS_TOKENLESS_EMBED = true;
+      }
+    }
+  } catch (e) {
+    document.documentElement.classList.add('in-iframe');
   }
 </script>
 <script src="config.js"></script>
-<script src="relay.js?v=2"></script>
+<script src="relay.js?v=3"></script>
+<script src="https://pgoutzeris-stack.github.io/ROOTS_Intranet/roots-user-bridge.js?v=20260728-identity-guard-v1"></script>
 <style>
 :root{
   --brand:#206efb; --brand-dark:#1a58c9; --ink:#0f172a; --muted:#475569;
@@ -274,7 +282,6 @@ node bridge/roots-print-bridge.js</pre>
   </div>
 </div>
 
-<script src="app.js?v=6"></script>
-<script src="https://pgoutzeris-stack.github.io/ROOTS_Intranet/roots-user-bridge.js?v=20260728-identity-guard-v1"></script>
+<script src="app.js?v=7"></script>
 </body>
 </html>

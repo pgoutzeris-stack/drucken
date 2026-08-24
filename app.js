@@ -711,8 +711,10 @@
   const IN_IFRAME = window.parent !== window;
   const EMBEDDED = IN_IFRAME || new URLSearchParams(location.search).has("authBroker");
   // Sandboxed iframes bekommen vom Intranet keine Sitzung. Dann laufen alle
-  // Anfragen ueber den Broker, genau wie bei Team-Kalender, Notes und SOP-Tool.
-  const TOKENLESS = window.ROOTS_TOKENLESS_EMBED === true;
+  // Anfragen ueber den Broker, genau wie bei Notes-Tool, Team-Kalender und
+  // SOP-Tool. Die Brücke ist die verlässlichere Quelle: sie kennt ihren eigenen
+  // Zustand, auch wenn das Flag zu spät gesetzt wurde.
+  const TOKENLESS = window.RootsUserBridge?.TOKENLESS_EMBED === true || window.ROOTS_TOKENLESS_EMBED === true;
 
   function domainAllowed(email) {
     const dom = String(email || "").split("@")[1] || "";
@@ -724,17 +726,13 @@
       $("#login-form").classList.add("hidden");
       msg("#gate-msg", "info", "Anmeldung wird vom Intranet übernommen…");
       relay().useBroker();
-      // Das Intranet meldet die Identität, sobald die Brücke sie bestätigt hat.
       window.addEventListener("roots-broker-context-ready", (e) => applyBrokerContext(e.detail));
       window.addEventListener("roots-auth-signed-out", () => {
         booted = false;
         msg("#gate-msg", "err", "Die Sitzung des Intranets ist beendet.", "Im Intranet neu anmelden, danach das Tool erneut öffnen.");
         showGate(true);
       });
-      setTimeout(() => {
-        if (!$("#app").classList.contains("hidden")) return;
-        msg("#gate-msg", "err", "Das Intranet hat keine Anmeldung übergeben.", "Im Intranet neu laden. Bleibt es dabei, ist <code>roots-user-bridge.js</code> nicht geladen.");
-      }, 9000);
+      void requestBrokerContext();
       return;
     }
 
@@ -787,6 +785,29 @@
     bootApp();
   }
 
+  /**
+   * Den Kontext selbst anfragen, statt auf das Ereignis der Brücke zu warten:
+   * genau wie das Notes-Tool. Das Intranet lehnt die Anfrage ab, solange es die
+   * Identität des Frames noch nicht gebunden hat — deshalb mehrere Versuche.
+   */
+  async function requestBrokerContext(attempt = 0) {
+    if (!$("#app").classList.contains("hidden")) return;
+    const request = window.RootsUserBridge?.request;
+    if (request) {
+      try {
+        const context = await request("user-context", {}, 20000);
+        if (context?.user?.id) return applyBrokerContext(context);
+      } catch (e) {
+        if (attempt === 0) msg("#gate-msg", "info", "Anmeldung wird vom Intranet übernommen…");
+      }
+    }
+    if (attempt >= 6) {
+      msg("#gate-msg", "err", "Das Intranet hat keine Anmeldung übergeben.", request ? "Im Intranet neu laden und die Kachel erneut öffnen." : "<code>roots-user-bridge.js</code> ist nicht geladen.");
+      return;
+    }
+    setTimeout(() => void requestBrokerContext(attempt + 1), 1500);
+  }
+
   /** Tokenloser Weg: Identität und Rolle kommen aus der Broker-Antwort. */
   function applyBrokerContext(context) {
     const email = context?.user?.email || context?.profile?.email || "";
@@ -799,6 +820,12 @@
       return showGate(true);
     }
     state.profile = context.profile || null;
+    // Die Brücke und ihre Kopfzeilen-Widgets lesen RootsUser — wie in den
+    // anderen tokenlosen Tools hier selbst setzen.
+    if (window.RootsUser) {
+      window.RootsUser._uid = context.user.id;
+      window.RootsUser._p = context.profile || { id: context.user.id, email, app_role: "reader" };
+    }
     clear("#gate-msg");
     $("#gate").classList.add("hidden");
     $("#app").classList.remove("hidden");
