@@ -945,8 +945,11 @@
     await bootApp();
   }
 
+  const VIEW_TITLE = { print: "Drucken", scan: "Scannen", jobs: "Aufträge", status: "Status" };
+
   function switchView(view) {
     $$(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
+    $("#header-sub").textContent = VIEW_TITLE[view] || "";
     $$("section[data-panel]").forEach((s) => s.classList.toggle("hidden", s.dataset.panel !== view));
     if (view === "jobs") loadJobs();
     if (view === "status") loadStatus();

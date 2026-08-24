@@ -90,7 +90,16 @@ button{font-family:inherit}
 .pill.busy i{color:var(--brand)}
 .pill-row{display:flex;flex-wrap:wrap;gap:8px}
 
+/* Header */
+.app-header{display:flex;align-items:center;justify-content:space-between;padding:.8rem 1.5rem;min-height:64px;background:var(--bg);border-bottom:1px solid var(--line);box-shadow:var(--shadow-dash);gap:14px;position:sticky;top:0;z-index:40}
+.header-left{display:flex;align-items:center;gap:12px;min-width:0}
+.header-title{font-size:14px;font-weight:700;color:var(--ink);white-space:nowrap}
+.header-divider{width:1px;height:16px;background:var(--line);flex-shrink:0}
+.header-sub{font-size:.82rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.header-right{display:flex;align-items:center;gap:10px;flex-shrink:0}
+
 /* Content */
+.main-col{display:flex;flex-direction:column;min-width:0}
 .content{padding:1.6rem 2rem 4rem;max-width:1150px}
 .page-head{display:flex;align-items:center;justify-content:space-between;gap:1rem;margin-bottom:1.2rem;flex-wrap:wrap}
 h1{font-size:1.35rem;font-weight:700;margin:0}
@@ -245,10 +254,21 @@ tr:last-child td{border-bottom:none}
       <span class="pill" id="pill-printer"><i class="ri-loader-4-line spin"></i><span class="pill-text">Drucker</span></span>
       <span class="pill" id="pill-wifi"><i class="ri-loader-4-line spin"></i><span class="pill-text">Netz</span></span>
       <span class="pill" id="pill-route"><i class="ri-loader-4-line spin"></i><span class="pill-text">Verbindung</span></span>
-      <span class="pill" id="pill-user"><i class="ri-user-line"></i><span class="pill-text">—</span></span>
       <button class="btn-ghost" id="logout" style="justify-content:center"><i class="ri-logout-box-r-line"></i> Abmelden</button>
     </div>
   </aside>
+
+  <div class="main-col">
+  <header class="app-header">
+    <div class="header-left">
+      <span class="header-title">Print</span>
+      <span class="header-divider"></span>
+      <span class="header-sub" id="header-sub">Drucken</span>
+    </div>
+    <div class="header-right">
+      <span class="pill" id="pill-user"><i class="ri-user-line"></i><span class="pill-text">—</span></span>
+    </div>
+  </header>
 
   <main class="content">
     <div id="banner"></div>
@@ -362,6 +382,7 @@ tr:last-child td{border-bottom:none}
       </div>
     </section>
   </main>
+  </div>
 </div>
 
 <div id="modal" class="modal-overlay hidden">
@@ -378,6 +399,6 @@ tr:last-child td{border-bottom:none}
   </div>
 </div>
 
-<script src="app.js?v=8"></script>
+<script src="app.js?v=9"></script>
 </body>
 </html>
