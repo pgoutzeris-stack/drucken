@@ -133,25 +133,44 @@
     pill.innerHTML = `<i class="fa-solid fa-cloud"></i> Warteschlange${online ? "" : " · Agent offline"}`;
   }
 
+  /**
+   * Reihenfolge im Automatikmodus: erst die Warteschlange, denn dort läuft der
+   * Agent im Büro und alle bekommen dasselbe Verhalten. Nur wenn dort kein Agent
+   * antwortet, greift der lokale Helfer als Rückfall.
+   */
   async function pickMode() {
     if (state.mode === "relay") {
       state.active = "relay";
       return;
     }
-    const ok = await detectBridge();
-    if (ok) {
+    if (state.mode === "bridge") {
       state.active = "bridge";
+      const ok = await detectBridge();
+      if (!ok) {
+        if (state.bridgeIssue === "token") msg("#banner", "err", "Der Helfer läuft, akzeptiert das Token aber nicht.", 'Token aus <code>~/.roots-print/token</code> unter „Verbindung“ einsetzen.');
+        else {
+          const kind = location.protocol === "https:" ? "blocked" : "offline";
+          msg("#banner", "err", NETWORK_HINTS[kind].message, NETWORK_HINTS[kind].hint);
+        }
+      }
+      return;
+    }
+
+    const agents = await relay().agentList();
+    const live = agents.some((a) => a.last_seen_at && Date.now() - Date.parse(a.last_seen_at) < relay().AGENT_STALE_MS);
+    if (live) {
+      state.active = "relay";
       clear("#banner");
       return;
     }
-    if (state.mode === "bridge") {
+    const ok = await detectBridge();
+    if (ok) {
       state.active = "bridge";
-      const kind = state.bridgeIssue === "token" ? null : location.protocol === "https:" ? "blocked" : "offline";
-      if (state.bridgeIssue === "token") msg("#banner", "err", "Der Helfer läuft, akzeptiert das Token aber nicht.", 'Token aus <code>~/.roots-print/token</code> unter „Verbindung“ einsetzen.');
-      else msg("#banner", "err", NETWORK_HINTS[kind].message, NETWORK_HINTS[kind].hint);
+      msg("#banner", "info", "Der Agent im Büro meldet sich nicht — es läuft über den lokalen Helfer.", "Aufträge gehen direkt an den Drucker in diesem Netz, nicht über die Warteschlange.");
       return;
     }
     state.active = "relay";
+    msg("#banner", "err", "Weder der Agent im Büro noch ein lokaler Helfer antwortet.", agents.length ? "Auf dem Büro-Rechner: <code>node bridge/roots-print-agent.js</code>. Aufträge bleiben bis dahin in der Warteschlange." : "Es ist kein Agent freigeschaltet — siehe „Verbindung“.");
   }
 
   /* ------------------------------------------------------------- printers --- */

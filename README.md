@@ -41,8 +41,12 @@ Zugriff auf 127.0.0.1 erlauben. Safari verbietet ihn von einer HTTPS-Seite; dort
 das Tool direkt über **http://127.0.0.1:7331** öffnen — der Helfer liefert
 dieselben Dateien aus.
 
-Das Tool nimmt automatisch den Helfer, wenn er antwortet, sonst die
-Warteschlange. Unter „Verbindung“ lässt sich der Weg festnageln.
+Im Automatikmodus hat die **Warteschlange Vorrang**: meldet sich der Agent im
+Büro, läuft alles darüber — für jeden gleich, ohne lokale Software. Schweigt er
+länger als fünf Minuten, greift der lokale Helfer als Rückfall, sofern einer
+läuft; das Tool sagt in beiden Fällen, welcher Weg gerade aktiv ist. Antwortet
+keiner von beiden, bleiben die Aufträge in der Warteschlange liegen, bis der Agent
+wieder da ist. Unter „Verbindung“ lässt sich ein Weg festnageln.
 
 ## Ganz ohne Rechner im Büro
 
@@ -107,9 +111,16 @@ Hash erneut anzeigen:
 node bridge/roots-print-agent.js --hash
 ```
 
-Dauerhaft im Hintergrund: `bash bridge/install.sh` (installiert den lokalen
-Helfer als LaunchAgent; für den Agenten dieselbe Datei mit
-`roots-print-agent.js` als Programm).
+Dauerhaft im Hintergrund, als LaunchAgent mit Autostart:
+
+```bash
+bash bridge/install.sh agent     # nur den Agenten (Büro-Rechner)
+bash bridge/install.sh helper    # nur den lokalen Helfer
+bash bridge/install.sh both      # beides auf einem Rechner
+```
+
+Das Skript zeigt am Ende Helfer-Token und Agent-Hash an. Entfernen:
+`bash bridge/uninstall.sh`.
 
 ## Lokalen Helfer starten
 
