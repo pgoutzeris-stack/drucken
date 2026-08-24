@@ -112,10 +112,14 @@ Canon-Partner, und die Aufträge laufen über Canons Cloud statt über dieses To
 ## Agent im Büro einrichten
 
 ```bash
-git clone https://github.com/pgoutzeris-stack/drucken.git
-cd drucken
+git clone https://github.com/pgoutzeris-stack/drucken.git ~/.roots-print/app
+cd ~/.roots-print/app
 node bridge/roots-print-agent.js      # Node >= 18, keine Abhängigkeiten
 ```
+
+Der Arbeitsordner liegt bewusst unter `~/.roots-print/app` und nicht auf dem
+Schreibtisch: dort liegen schon Token und Protokolle, und der Ordner soll nicht im
+Weg stehen.
 
 Beim ersten Start legt der Agent ein Token in `~/.roots-print/agent-token` (0600)
 an und zeigt dessen SHA-256-Hash. Ein Admin trägt den Hash im Tool unter
@@ -142,7 +146,7 @@ Das Skript zeigt am Ende Helfer-Token und Agent-Hash an. Entfernen:
 ## Lokalen Helfer starten
 
 ```bash
-node bridge/roots-print-bridge.js
+cd ~/.roots-print/app && node bridge/roots-print-bridge.js
 ```
 
 Token steht in `~/.roots-print/token` und wird im Tool unter „Verbindung“
