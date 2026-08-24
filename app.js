@@ -18,13 +18,44 @@
   const LS_URL = "roots-print-url";
   const LS_MODE = "roots-print-mode";
 
+  /**
+   * In einem sandboxed iframe (so hängt die Kachel im Intranet) wirft jeder
+   * Zugriff auf localStorage eine SecurityError-Ausnahme. Ohne diese Kapselung
+   * bricht das Skript beim Start ab — sichtbar als Anmeldemaske, die nie
+   * verschwindet.
+   */
+  const memoryStore = new Map();
+  function lsGet(key) {
+    try {
+      return window.localStorage.getItem(key);
+    } catch (e) {
+      return memoryStore.has(key) ? memoryStore.get(key) : null;
+    }
+  }
+  function lsSet(key, value) {
+    memoryStore.set(key, value);
+    try {
+      window.localStorage.setItem(key, value);
+    } catch (e) {
+      /* Sandbox: der Wert lebt nur in dieser Sitzung */
+    }
+  }
+  function lsDel(key) {
+    memoryStore.delete(key);
+    try {
+      window.localStorage.removeItem(key);
+    } catch (e) {
+      /* Sandbox: es gab nichts zu löschen */
+    }
+  }
+
   const state = {
-    mode: localStorage.getItem(LS_MODE) || "auto",
+    mode: lsGet(LS_MODE) || "auto",
     active: null, // 'bridge' | 'relay'
     bridge: null,
     bridgeIssue: null,
-    token: localStorage.getItem(LS_TOKEN) || "",
-    url: localStorage.getItem(LS_URL) || CFG.BRIDGE_ORIGINS[0],
+    token: lsGet(LS_TOKEN) || "",
+    url: lsGet(LS_URL) || CFG.BRIDGE_ORIGINS[0],
     printers: [],
     devices: [],
     caps: null,
@@ -106,7 +137,7 @@
         const info = await res.json();
         state.url = url;
         state.bridge = info;
-        localStorage.setItem(LS_URL, url);
+        lsSet(LS_URL, url);
         if (!info.tokenValid) {
           state.bridgeIssue = "token";
           return false;
@@ -872,7 +903,7 @@
 
     $("#conn-mode").addEventListener("change", async () => {
       state.mode = $("#conn-mode").value;
-      localStorage.setItem(LS_MODE, state.mode);
+      lsSet(LS_MODE, state.mode);
       await rebootApp();
       msg("#conn-out", "ok", state.active === "bridge" ? "Läuft über den lokalen Helfer." : "Läuft über die Warteschlange.");
     });
@@ -880,13 +911,13 @@
     $("#conn-save").addEventListener("click", async () => {
       state.url = $("#conn-url").value.trim().replace(/\/$/, "");
       state.token = $("#conn-token").value.trim();
-      localStorage.setItem(LS_URL, state.url);
-      localStorage.setItem(LS_TOKEN, state.token);
+      lsSet(LS_URL, state.url);
+      lsSet(LS_TOKEN, state.token);
       const ok = await detectBridge(true);
       if (ok) {
         msg("#conn-out", "ok", `Verbunden mit ${state.url}.`);
         state.mode = "auto";
-        localStorage.setItem(LS_MODE, "auto");
+        lsSet(LS_MODE, "auto");
         await rebootApp();
       } else if (state.bridgeIssue === "token") {
         msg("#conn-out", "err", "Der Helfer läuft, akzeptiert dieses Token aber nicht.", "Aktuelles Token anzeigen: <code>cat ~/.roots-print/token</code>");
@@ -896,7 +927,7 @@
       }
     });
     $("#conn-forget").addEventListener("click", () => {
-      localStorage.removeItem(LS_TOKEN);
+      lsDel(LS_TOKEN);
       state.token = "";
       $("#conn-token").value = "";
       msg("#conn-out", "info", "Token gelöscht.");
