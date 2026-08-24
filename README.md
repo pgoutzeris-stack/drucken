@@ -1,12 +1,14 @@
-# ROOTS Drucken
+# ROOTS Print
 
 Drucken und Scannen am ROOTS-Netzwerkdrucker aus dem Browser: Warteschlangen und
 Treiberoptionen aus CUPS, Scannen über AirScan/eSCL mit Vorschau, Download und
 Netzdiagnose.
 
 - Oberfläche: https://pgoutzeris-stack.github.io/drucken/
-- Zugang: ROOTS-Konto (gemeinsames Supabase-Projekt), nur Adressen der Domänen
-  `roots-consultants.com` und `roots-consultants.de`.
+- Zugang: Im Intranet übernimmt `roots-user-bridge.js` die Sitzung (Aufruf mit
+  `?authBroker=v1`, kein zweites Login). Direkt geöffnet fragt das Tool
+  E-Mail und Passwort des ROOTS-Kontos ab. In beiden Fällen sind nur Adressen der
+  Domänen `roots-consultants.com` und `roots-consultants.de` zugelassen.
 
 ## Warum ein lokaler Helfer nötig ist
 
@@ -57,7 +59,7 @@ Anderer Port: `ROOTS_PRINT_PORT=7332 node bridge/roots-print-bridge.js`
 
 | Ebene | Prüfung |
 |---|---|
-| Oberfläche | Supabase-Session erforderlich, sonst nur Anmeldemaske |
+| Oberfläche | Im Intranet die übergebene Supabase-Session, sonst eigene Anmeldung |
 | Konto | E-Mail-Domäne muss in `ALLOWED_EMAIL_DOMAINS` stehen |
 | Helfer | Bearer-Token aus `~/.roots-print/token` bei jedem `/api/*`-Aufruf |
 | Netz | Bindung nur an `127.0.0.1`, CORS nur für Intranet-Origin und localhost |

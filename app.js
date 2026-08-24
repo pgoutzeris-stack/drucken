@@ -434,6 +434,13 @@
         </div>`;
       })
       .join("");
+    $$("#scan-pages .meta a").forEach((el, i) =>
+      el.addEventListener("click", (ev) => {
+        if (!window.RootsUserBridge?.downloadBlob) return;
+        ev.preventDefault();
+        savePage(job.pages[i], i);
+      })
+    );
     $$("#scan-pages .thumb").forEach((el) =>
       el.addEventListener("click", () => {
         const idx = Number(el.dataset.preview);
@@ -441,6 +448,27 @@
       })
     );
     state.scanPages = job.pages;
+  }
+
+  /** In the intranet iframe a plain <a download> is inert, so hand the blob over. */
+  async function savePage(page, idx) {
+    const name = `scan-${String(idx + 1).padStart(2, "0")}.${page.mime.includes("pdf") ? "pdf" : page.mime.includes("png") ? "png" : "jpg"}`;
+    if (window.RootsUserBridge?.downloadBlob) {
+      try {
+        const res = await call(page.url, { raw: true });
+        window.RootsUserBridge.downloadBlob(await res.blob(), name);
+        return;
+      } catch (e) {
+        showError("#scan-result", e);
+        return;
+      }
+    }
+    const a = document.createElement("a");
+    a.href = pageUrl(page);
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
   }
 
   function openPreview(page, idx) {
@@ -511,6 +539,8 @@
   /* ----------------------------------------------------------------- auth --- */
 
   let sb = null;
+  const IN_IFRAME = window.parent !== window;
+  const EMBEDDED = IN_IFRAME || new URLSearchParams(location.search).has("authBroker");
 
   function domainAllowed(email) {
     const dom = String(email || "").split("@")[1] || "";
@@ -519,7 +549,28 @@
 
   async function bootAuth() {
     sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY);
+    // roots-user-bridge.js picks the client up here and installs the session
+    // the intranet hands over, exactly as in the other ROOTS tools.
     window.__rootsSupabaseClient = sb;
+
+    if (EMBEDDED) {
+      $("#login-form").classList.add("hidden");
+      msg("#gate-msg", "info", "Anmeldung wird vom Intranet übernommen…");
+      window.addEventListener("roots-auth-ready", (e) => applySession(e.detail?.session || null));
+      window.addEventListener("roots-auth-signed-out", () => {
+        booted = false;
+        msg("#gate-msg", "err", "Die Sitzung des Intranets ist beendet.", "Im Intranet neu anmelden, danach das Tool erneut öffnen.");
+        showGate(true);
+      });
+      // The bridge repeats the hand-off while the frame starts; ask once itself
+      // in case this frame was loaded before the parent was ready.
+      setTimeout(() => window.RootsUserBridge?.syncAuthFromParentStorage?.(), 300);
+      setTimeout(() => {
+        if (!$("#app").classList.contains("hidden")) return;
+        msg("#gate-msg", "err", "Das Intranet hat keine Sitzung übergeben.", "Im Intranet abmelden und neu anmelden. Bleibt es dabei, ist <code>roots-user-bridge.js</code> nicht geladen.");
+      }, 8000);
+    }
+
     const { data } = await sb.auth.getSession();
     applySession(data.session);
     sb.auth.onAuthStateChange((_e, session) => applySession(session));
@@ -527,10 +578,10 @@
 
   function applySession(session) {
     const email = session?.user?.email || "";
-    if (!session) return showGate();
+    if (!session) return showGate(EMBEDDED);
     if (!domainAllowed(email)) {
       msg("#gate-msg", "err", "Dieses Konto gehört nicht zu ROOTS.", "Drucken und Scannen sind auf Adressen der ROOTS-Domänen beschränkt.");
-      sb.auth.signOut();
+      if (!EMBEDDED) sb.auth.signOut();
       return showGate(true);
     }
     $("#gate").classList.add("hidden");
@@ -606,15 +657,10 @@
     $("#scan-go").addEventListener("click", startScan);
     $("#scan-status").addEventListener("click", refreshScannerStatus);
     $("#scan-print").addEventListener("click", printScan);
-    $("#scan-dl-all").addEventListener("click", () => {
-      (state.scanPages || []).forEach((p, i) => {
-        const a = document.createElement("a");
-        a.href = pageUrl(p);
-        a.download = `scan-${String(i + 1).padStart(2, "0")}.${p.mime.includes("pdf") ? "pdf" : "jpg"}`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-      });
+    $("#scan-dl-all").addEventListener("click", async () => {
+      for (const [i, p] of (state.scanPages || []).entries()) {
+        await savePage(p, i);
+      }
     });
 
     $("#dev-refresh").addEventListener("click", loadDevices);
