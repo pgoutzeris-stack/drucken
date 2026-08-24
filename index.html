@@ -5,13 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ROOTS Print</title>
 <link rel="stylesheet" href="https://fonts.cdnfonts.com/css/circular-std">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.8/dist/umd/supabase.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css">
 <script>
-  // Im Intranet laeuft dieses Tool in einem sandboxed iframe und bekommt deshalb
-  // keine eigene Supabase-Sitzung. Wie Notes-Tool, Team-Kalender und SOP-Tool
-  // arbeitet es dann tokenlos: das Intranet fuehrt die Anfragen mit der Sitzung
-  // des Nutzers aus. Die Kennzeichnung muss vor roots-user-bridge.js stehen.
   try {
     if (window.self !== window.top) {
       document.documentElement.classList.add('in-iframe');
@@ -23,265 +18,366 @@
     document.documentElement.classList.add('in-iframe');
   }
 </script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.8/dist/umd/supabase.js"></script>
 <script src="config.js"></script>
-<script src="relay.js?v=3"></script>
+<script src="relay.js?v=4"></script>
 <script src="https://pgoutzeris-stack.github.io/ROOTS_Intranet/roots-user-bridge.js?v=20260728-identity-guard-v1"></script>
 <style>
 :root{
-  --brand:#206efb; --brand-dark:#1a58c9; --ink:#0f172a; --muted:#475569;
-  --line:#e2e8f0; --bg:#f6f8fc; --card:#fff; --ok:#0f9d58; --warn:#b45309; --err:#dc2626;
-  --radius:14px; --shadow:0 12px 32px rgba(15,23,42,.08);
+  --ink:#0f172a; --muted:#475569; --line:#e2e8f0;
+  --brand:#206efb; --brand-light:#eff6ff; --brand-dark:#165fd9;
+  --danger:#dc2626; --success:#10b981;
+  --status-bg:#f8fafc; --status-border:#94a3b8; --status-text:#334155;
+  --warning-bg:#fffbf0; --warning-text:#b45309;
+  --bg:#ffffff; --app-bg:#f4f7fb;
+  --shadow:0 6px 20px rgba(15,23,42,.08); --shadow-lg:0 12px 40px rgba(15,23,42,.14);
+  --shadow-dash:0 2px 8px rgba(15,23,42,.04); --shadow-modal:0 20px 60px rgba(15,23,42,.2);
+  --shadow-focus:0 0 0 3px rgba(32,110,251,.15);
+  --radius:16px; --radius-dash:14px; --radius-pill:999px;
+  --surface:#f8fafc; --disabled-bg:#e2e8f0; --disabled-text:#94a3b8;
 }
-*{box-sizing:border-box}
-body{margin:0;font-family:'Circular Std',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--ink);font-size:15px}
+@media (prefers-color-scheme: dark){
+  :root{
+    --ink:#f8fafc; --muted:#94a3b8; --line:#334155;
+    --brand:#3b82f6; --brand-light:#1e3a8a; --brand-dark:#60a5fa;
+    --danger:#ef4444; --success:#34d399;
+    --status-bg:#1e293b; --status-border:#475569; --status-text:#cbd5e1;
+    --warning-bg:#451a03; --warning-text:#fde68a;
+    --bg:#0f172a; --app-bg:#0b1220; --surface:#1e293b;
+    --shadow:0 6px 20px rgba(0,0,0,.5); --disabled-bg:#334155; --disabled-text:#64748b;
+  }
+}
+*{font-family:'Circular Std',system-ui,sans-serif;box-sizing:border-box}
+body{margin:0;background:var(--app-bg);color:var(--ink);font-size:15px;line-height:1.4}
 button{font-family:inherit}
-.app{display:grid;grid-template-columns:248px 1fr;min-height:100vh}
-aside{background:var(--card);border-right:1px solid var(--line);padding:20px 16px;display:flex;flex-direction:column;gap:22px}
-.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:1.02rem}
-.brand i{color:var(--brand)}
-nav{display:flex;flex-direction:column;gap:4px}
-nav button{display:flex;align-items:center;gap:10px;background:none;border:0;text-align:left;padding:10px 12px;border-radius:10px;color:var(--muted);font-size:.9rem;cursor:pointer}
-nav button i{width:18px;text-align:center}
-nav button:hover{background:#f1f5f9;color:var(--ink)}
-nav button.active{background:#eff6ff;color:var(--brand);font-weight:600}
-.side-foot{margin-top:auto;display:flex;flex-direction:column;gap:8px;font-size:.78rem;color:var(--muted)}
-.pill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-size:.74rem;font-weight:600;border:1px solid var(--line);background:#f8fafc}
-.pill.ok{color:var(--ok);border-color:#bbf7d0;background:#f0fdf4}
-.pill.err{color:var(--err);border-color:#fecaca;background:#fef2f2}
-.pill.warn{color:var(--warn);border-color:#fde68a;background:#fffbeb}
-main{padding:26px 30px 60px;max-width:1180px}
-h1{font-size:1.42rem;margin:0 0 4px}
-h2{font-size:1.03rem;margin:0 0 12px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow);margin-bottom:18px}
-.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
-label{display:block;font-size:.78rem;font-weight:600;color:var(--muted);margin-bottom:5px}
-select,input[type=text],input[type=password],input[type=email],input[type=number]{width:100%;height:40px;padding:0 11px;border:1px solid var(--line);border-radius:10px;font-family:inherit;font-size:.88rem;background:#fff;color:var(--ink)}
-input[type=file]{width:100%;font-size:.85rem}
-.btn{height:42px;padding:0 18px;border:0;border-radius:999px;background:var(--brand);color:#fff;font-weight:600;font-size:.88rem;cursor:pointer;display:inline-flex;align-items:center;gap:8px}
-.btn:hover{background:var(--brand-dark)}
-.btn[disabled]{opacity:.5;cursor:not-allowed}
-.btn.ghost{background:none;color:var(--ink);border:1px solid var(--line)}
-.btn.ghost:hover{background:#f1f5f9}
-.btn.sm{height:34px;padding:0 14px;font-size:.8rem}
-.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-table{width:100%;border-collapse:collapse;font-size:.86rem}
-th,td{text-align:left;padding:9px 8px;border-bottom:1px solid var(--line)}
-th{font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
-.pages{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-top:14px}
-.page{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#fff;display:flex;flex-direction:column}
-.page .thumb{height:170px;display:flex;align-items:center;justify-content:center;background:#f1f5f9;cursor:pointer;overflow:hidden}
-.page .thumb img{max-width:100%;max-height:100%}
-.page .thumb i{font-size:2rem;color:#94a3b8}
-.page .meta{padding:8px 10px;font-size:.76rem;color:var(--muted);display:flex;justify-content:space-between;align-items:center;gap:6px}
-.page .meta a{color:var(--brand);text-decoration:none;font-weight:600}
-.msg{border-radius:12px;padding:13px 15px;font-size:.86rem;margin-bottom:14px;display:flex;gap:10px;align-items:flex-start}
-.msg i{margin-top:2px}
-.msg.err{background:#fef2f2;border:1px solid #fecaca;color:#7f1d1d}
-.msg.ok{background:#f0fdf4;border:1px solid #bbf7d0;color:#14532d}
-.msg.info{background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a}
-.msg .hint{display:block;margin-top:5px;font-weight:400;opacity:.9}
-.msg code{background:rgba(15,23,42,.07);padding:1px 5px;border-radius:5px;font-size:.8rem}
-.gate{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
-.gate .card{max-width:400px;width:100%;margin:0}
 .hidden{display:none!important}
-.spin{animation:sp 1s linear infinite}
-@keyframes sp{to{transform:rotate(360deg)}}
-.check{display:flex;gap:10px;padding:11px 0;border-bottom:1px solid var(--line);font-size:.86rem}
-.check:last-child{border-bottom:0}
-.check .ico{width:20px;text-align:center}
-.check .ico.ok{color:var(--ok)}
-.check .ico.bad{color:var(--err)}
-.check .body{flex:1}
-.check .detail{color:var(--muted);font-size:.8rem;margin-top:2px}
-.check .fix{color:var(--warn);font-size:.8rem;margin-top:3px}
-.modal{position:fixed;inset:0;background:rgba(15,23,42,.62);display:flex;align-items:center;justify-content:center;padding:24px;z-index:60}
-.modal .inner{background:#fff;border-radius:16px;max-width:min(900px,100%);width:100%;max-height:90vh;display:flex;flex-direction:column;overflow:hidden}
-.modal header{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line);font-weight:700}
-.modal .content{flex:1;overflow:auto;background:#f1f5f9;display:flex;align-items:center;justify-content:center;min-height:340px}
-.modal .content img,.modal .content iframe{max-width:100%;max-height:82vh;width:100%;border:0}
-.modal footer{padding:12px 18px;border-top:1px solid var(--line);display:flex;gap:10px;justify-content:flex-end}
-.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.8rem}
-@media (max-width:860px){.app{grid-template-columns:1fr}aside{border-right:0;border-bottom:1px solid var(--line)}nav{flex-direction:row;overflow-x:auto}main{padding:20px 16px 50px}}
+.spin{animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes slideIn{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:none}}
+@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+/* Buttons */
+.btn-primary{background:var(--brand);color:#fff;border:none;border-radius:var(--radius-pill);padding:.85rem 1.6rem;font-size:.93rem;font-weight:600;cursor:pointer;transition:all .2s;display:inline-flex;align-items:center;gap:8px;box-shadow:var(--shadow)}
+.btn-primary:hover:not(:disabled){background:var(--brand-dark);transform:translateY(-1px)}
+.btn-primary:disabled{background:var(--disabled-bg);color:var(--disabled-text);cursor:not-allowed;transform:none;box-shadow:none}
+.btn-secondary{background:var(--bg);border:1.5px solid var(--line);color:var(--ink);border-radius:var(--radius-pill);padding:.68rem 1.3rem;font-size:.88rem;font-weight:500;cursor:pointer;transition:all .2s;display:inline-flex;align-items:center;gap:8px}
+.btn-secondary:hover:not(:disabled){border-color:var(--brand);color:var(--brand)}
+.btn-secondary:disabled{opacity:.5;cursor:not-allowed}
+.btn-ghost{background:transparent;border:none;color:var(--muted);border-radius:8px;padding:.5rem;cursor:pointer;transition:all .2s;display:inline-flex;align-items:center;gap:6px;font-size:.85rem}
+.btn-ghost:hover{background:var(--surface);color:var(--ink)}
+.btn-sm{padding:.5rem 1rem;font-size:.82rem}
+
+/* Shell */
+.app-shell{display:grid;grid-template-columns:250px 1fr;min-height:100vh}
+.sidebar{background:var(--bg);border-right:1px solid var(--line);padding:1.1rem 1rem;display:flex;flex-direction:column;gap:1.4rem}
+.wordmark{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:700;color:var(--ink);letter-spacing:.2px}
+.wordmark i{color:var(--brand);font-size:1.15rem}
+.wordmark span{color:var(--brand)}
+.nav{display:flex;flex-direction:column;gap:2px}
+.nav-item{display:flex;align-items:center;gap:10px;background:none;border:none;text-align:left;padding:.62rem .8rem;border-radius:10px;color:var(--muted);font-size:.88rem;font-weight:500;cursor:pointer;transition:all .15s;width:100%}
+.nav-item i{font-size:1.05rem;width:20px;text-align:center}
+.nav-item:hover{background:var(--surface);color:var(--ink)}
+.nav-item.active{background:var(--brand-light);color:var(--brand);font-weight:600}
+.sidebar-foot{margin-top:auto;display:flex;flex-direction:column;gap:.55rem}
+
+/* Status pills */
+.pill{display:inline-flex;align-items:center;gap:7px;height:34px;padding:0 12px;border-radius:var(--radius-pill);border:1px solid var(--line);background:var(--bg);color:var(--status-text);font-size:.82rem;font-weight:500;white-space:nowrap;max-width:100%}
+.pill i{font-size:1rem;flex-shrink:0}
+.pill .pill-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pill.ok i{color:var(--success)}
+.pill.warn{background:var(--warning-bg);color:var(--warning-text);border-color:#fbbf24}
+.pill.bad{background:var(--warning-bg);color:var(--danger);border-color:#fca5a5}
+.pill.busy i{color:var(--brand)}
+.pill-row{display:flex;flex-wrap:wrap;gap:8px}
+
+/* Content */
+.content{padding:1.6rem 2rem 4rem;max-width:1150px}
+.page-head{display:flex;align-items:center;justify-content:space-between;gap:1rem;margin-bottom:1.2rem;flex-wrap:wrap}
+h1{font-size:1.35rem;font-weight:700;margin:0}
+h2{font-size:.95rem;font-weight:700;margin:0 0 1rem}
+.card{background:var(--bg);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow-dash);padding:1.3rem;margin-bottom:1.1rem}
+.card-head{display:flex;align-items:center;justify-content:space-between;gap:.8rem;margin-bottom:1rem}
+.card-head h2{margin:0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:.9rem}
+.row{display:flex;gap:.7rem;flex-wrap:wrap;align-items:center}
+.field-label{display:block;font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:.45rem}
+
+/* Inputs */
+.input{width:100%;height:44px;padding:0 .9rem;border:1.5px solid var(--line);border-radius:12px;background:var(--bg);color:var(--ink);font-size:.9rem;transition:all .2s}
+.input:focus{outline:none;border-color:var(--brand);box-shadow:var(--shadow-focus)}
+.input:disabled{background:var(--disabled-bg);color:var(--disabled-text)}
+.input::placeholder{color:var(--disabled-text)}
+
+/* Select im ROOTS-Design */
+.select{position:relative}
+.select-trigger{width:100%;height:44px;padding:0 .9rem;border:1.5px solid var(--line);border-radius:12px;background:var(--bg);color:var(--ink);font-size:.9rem;font-weight:500;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:.6rem;transition:all .2s;text-align:left}
+.select-trigger:hover:not(:disabled){border-color:var(--brand)}
+.select-trigger:focus-visible{outline:none;border-color:var(--brand);box-shadow:var(--shadow-focus)}
+.select-trigger[aria-expanded="true"]{border-color:var(--brand);box-shadow:var(--shadow-focus)}
+.select-trigger:disabled{background:var(--disabled-bg);color:var(--disabled-text);cursor:not-allowed}
+.select-trigger .sel-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.select-trigger i{color:var(--muted);font-size:1.05rem;transition:transform .2s}
+.select-trigger[aria-expanded="true"] i{transform:rotate(180deg);color:var(--brand)}
+.select-menu{position:absolute;top:calc(100% + 6px);left:0;right:0;background:var(--bg);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow-lg);z-index:60;max-height:280px;overflow-y:auto;display:none;padding:.3rem;animation:fadeIn .15s ease}
+.select.open .select-menu{display:block}
+.select-option{display:flex;align-items:center;justify-content:space-between;gap:.6rem;width:100%;padding:.6rem .7rem;border:none;background:none;border-radius:9px;color:var(--ink);font-size:.87rem;font-weight:500;cursor:pointer;text-align:left;transition:background .15s}
+.select-option:hover{background:var(--brand-light);color:var(--brand)}
+.select-option[aria-selected="true"]{color:var(--brand);font-weight:600}
+.select-option[aria-selected="true"]::after{content:'\\ea5e';font-family:remixicon!important;font-size:1rem}
+.select-empty{padding:.7rem;font-size:.85rem;color:var(--muted)}
+
+/* Dateiwahl */
+.filedrop{border:1.5px dashed var(--line);border-radius:12px;padding:1.1rem;display:flex;align-items:center;gap:.9rem;cursor:pointer;transition:all .2s;background:var(--surface)}
+.filedrop:hover,.filedrop.over{border-color:var(--brand);background:var(--brand-light)}
+.filedrop i{font-size:1.5rem;color:var(--brand)}
+.filedrop-text{font-size:.88rem;font-weight:500;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.filedrop-meta{font-size:.78rem;color:var(--muted)}
+
+/* Tabellen */
+table{width:100%;border-collapse:collapse;font-size:.87rem}
+th{text-align:left;padding:.6rem .5rem;font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);border-bottom:1px solid var(--line)}
+td{padding:.75rem .5rem;border-bottom:1px solid var(--line);vertical-align:middle}
+tr:last-child td{border-bottom:none}
+.empty{padding:1.4rem .5rem;color:var(--muted);font-size:.87rem}
+
+/* Meldungen */
+.note{border-radius:12px;padding:.9rem 1rem;font-size:.87rem;display:flex;gap:.7rem;align-items:flex-start;margin-bottom:1rem;border:1px solid var(--line);background:var(--surface);color:var(--ink)}
+.note i{font-size:1.1rem;flex-shrink:0;margin-top:1px}
+.note strong{font-weight:600}
+.note .sub{display:block;margin-top:.25rem;color:var(--muted);font-weight:400}
+.note code{background:rgba(15,23,42,.06);padding:1px 5px;border-radius:5px;font-size:.82rem;font-family:ui-monospace,Menlo,monospace}
+.note.err{background:var(--warning-bg);border-color:#fca5a5;color:var(--danger)}
+.note.err .sub{color:var(--warning-text)}
+.note.ok{background:#f0fdf4;border-color:#bbf7d0;color:#14532d}
+.note.ok .sub{color:#15803d}
+.note.info{background:var(--brand-light);border-color:#bfdbfe;color:var(--brand-dark)}
+.note.info .sub{color:var(--muted)}
+@media (prefers-color-scheme: dark){
+  .note.ok{background:#052e1a;border-color:#166534;color:#a7f3d0}
+  .note.ok .sub{color:#6ee7b7}
+}
+
+/* Seiten */
+.pages{display:grid;grid-template-columns:repeat(auto-fill,minmax(158px,1fr));gap:.9rem;margin-top:1rem}
+.page{border:1px solid var(--line);border-radius:var(--radius-dash);overflow:hidden;background:var(--bg);box-shadow:var(--shadow-dash);transition:all .2s}
+.page:hover{box-shadow:var(--shadow);transform:translateY(-2px)}
+.page-thumb{height:172px;display:flex;align-items:center;justify-content:center;background:var(--surface);cursor:pointer;overflow:hidden}
+.page-thumb img{max-width:100%;max-height:100%}
+.page-thumb i{font-size:2.2rem;color:var(--status-border)}
+.page-meta{padding:.6rem .7rem;display:flex;align-items:center;justify-content:space-between;gap:.5rem;font-size:.78rem;color:var(--muted);border-top:1px solid var(--line)}
+
+/* Prüfliste */
+.check{display:flex;gap:.75rem;padding:.85rem 0;border-bottom:1px solid var(--line)}
+.check:last-child{border-bottom:none}
+.check-ico{width:22px;text-align:center;font-size:1.15rem}
+.check-ico.ok{color:var(--success)}
+.check-ico.bad{color:var(--danger)}
+.check-ico.unknown{color:var(--status-border)}
+.check-body{flex:1;min-width:0}
+.check-body strong{font-size:.88rem;font-weight:600}
+.check-detail{font-size:.8rem;color:var(--muted);margin-top:.15rem;font-family:ui-monospace,Menlo,monospace;word-break:break-word}
+.check-fix{font-size:.8rem;color:var(--warning-text);margin-top:.3rem;display:flex;gap:.35rem;align-items:flex-start}
+
+/* Modal */
+.modal-overlay{position:fixed;inset:0;background:rgba(15,23,42,.6);display:flex;align-items:center;justify-content:center;padding:1.5rem;z-index:200;animation:fadeIn .15s ease}
+.modal-box{background:var(--bg);border-radius:var(--radius);box-shadow:var(--shadow-modal);width:min(920px,100%);max-height:90vh;display:flex;flex-direction:column;overflow:hidden}
+.modal-head{display:flex;align-items:center;justify-content:space-between;padding:1rem 1.2rem;border-bottom:1px solid var(--line)}
+.modal-title{font-size:1.2rem;font-weight:700}
+.modal-body{flex:1;overflow:auto;background:var(--surface);display:flex;align-items:center;justify-content:center;min-height:320px;padding:1rem}
+.modal-body img{max-width:100%;max-height:76vh;border-radius:8px;box-shadow:var(--shadow)}
+.modal-body iframe{width:100%;height:76vh;border:none;border-radius:8px;background:#fff}
+.modal-foot{padding:.9rem 1.2rem;border-top:1px solid var(--line);display:flex;gap:.6rem;justify-content:flex-end}
+
+/* Toasts */
+#toasts{position:fixed;bottom:20px;right:20px;display:flex;flex-direction:column;gap:10px;z-index:999999}
+.toast{background:var(--bg);border-left:4px solid var(--brand);box-shadow:var(--shadow);padding:12px 18px;border-radius:8px;display:flex;align-items:center;gap:12px;min-width:250px;max-width:360px;animation:slideIn .3s ease;color:var(--ink);font-size:.9rem}
+.toast.error{border-color:var(--danger)}
+.toast.success{border-color:var(--success)}
+.toast i{font-size:1.15rem}
+
+/* Anmeldung */
+.gate{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1.5rem}
+.gate .card{width:100%;max-width:392px;margin:0;padding:1.6rem}
+.gate .wordmark{margin-bottom:1.3rem}
+
+@media (max-width:980px){
+  .app-shell{grid-template-columns:1fr}
+  .sidebar{border-right:none;border-bottom:1px solid var(--line);gap:1rem}
+  .nav{flex-direction:row;overflow-x:auto;padding-bottom:.2rem}
+  .nav-item{white-space:nowrap}
+  .sidebar-foot{margin-top:0}
+  .content{padding:1.2rem 1rem 3rem}
+}
 </style>
 </head>
 <body>
 
+<div id="toasts"></div>
+
 <div id="gate" class="gate">
   <div class="card">
-    <div class="brand" style="margin-bottom:16px"><i class="fa-solid fa-print"></i> ROOTS Print</div>
+    <div class="wordmark"><i class="ri-printer-line"></i> ROOTS <span>Print</span></div>
     <div id="gate-msg"></div>
     <form id="login-form">
-      <div style="margin-bottom:12px">
-        <label for="gate-email">E-Mail</label>
-        <input id="gate-email" type="email" autocomplete="username" required>
+      <div style="margin-bottom:.9rem">
+        <label class="field-label" for="gate-email">E-Mail</label>
+        <input class="input" id="gate-email" type="email" autocomplete="username" required>
       </div>
-      <div style="margin-bottom:16px">
-        <label for="gate-pw">Passwort</label>
-        <input id="gate-pw" type="password" autocomplete="current-password" required>
+      <div style="margin-bottom:1.2rem">
+        <label class="field-label" for="gate-pw">Passwort</label>
+        <input class="input" id="gate-pw" type="password" autocomplete="current-password" required>
       </div>
-      <button class="btn" style="width:100%;justify-content:center" type="submit"><i class="fa-solid fa-arrow-right-to-bracket"></i> Anmelden</button>
+      <button class="btn-primary" style="width:100%;justify-content:center" type="submit"><i class="ri-login-circle-line"></i> Anmelden</button>
     </form>
   </div>
 </div>
 
-<div id="app" class="app hidden">
-  <aside>
-    <div class="brand"><i class="fa-solid fa-print"></i> ROOTS Print</div>
-    <nav>
-      <button data-view="print" class="active"><i class="fa-solid fa-file-arrow-up"></i> Drucken</button>
-      <button data-view="scan"><i class="fa-solid fa-image"></i> Scannen</button>
-      <button data-view="devices"><i class="fa-solid fa-network-wired"></i> Geräte</button>
-      <button data-view="jobs"><i class="fa-solid fa-list-check"></i> Aufträge</button>
-      <button data-view="diagnose"><i class="fa-solid fa-stethoscope"></i> Diagnose</button>
-      <button data-view="connection"><i class="fa-solid fa-plug"></i> Verbindung</button>
+<div id="app" class="app-shell hidden">
+  <aside class="sidebar">
+    <div class="wordmark"><i class="ri-printer-line"></i> ROOTS <span>Print</span></div>
+    <nav class="nav">
+      <button class="nav-item active" data-view="print"><i class="ri-printer-line"></i> Drucken</button>
+      <button class="nav-item" data-view="scan"><i class="ri-scan-line"></i> Scannen</button>
+      <button class="nav-item" data-view="jobs"><i class="ri-list-check-2"></i> Aufträge</button>
+      <button class="nav-item" data-view="status"><i class="ri-pulse-line"></i> Status</button>
     </nav>
-    <div class="side-foot">
-      <span id="bridge-pill" class="pill"><i class="fa-solid fa-circle-notch spin"></i> Helfer wird gesucht</span>
-      <span id="user-pill" class="pill"></span>
-      <button id="logout" class="btn ghost sm" style="justify-content:center"><i class="fa-solid fa-arrow-right-from-bracket"></i> Abmelden</button>
+    <div class="sidebar-foot">
+      <span class="pill" id="pill-printer"><i class="ri-loader-4-line spin"></i><span class="pill-text">Drucker</span></span>
+      <span class="pill" id="pill-wifi"><i class="ri-loader-4-line spin"></i><span class="pill-text">Netz</span></span>
+      <span class="pill" id="pill-route"><i class="ri-loader-4-line spin"></i><span class="pill-text">Verbindung</span></span>
+      <span class="pill" id="pill-user"><i class="ri-user-line"></i><span class="pill-text">—</span></span>
+      <button class="btn-ghost" id="logout" style="justify-content:center"><i class="ri-logout-box-r-line"></i> Abmelden</button>
     </div>
   </aside>
 
-  <main>
+  <main class="content">
     <div id="banner"></div>
 
     <section data-panel="print">
-      <h1>Drucken</h1>
+      <div class="page-head"><h1>Drucken</h1>
+        <button class="btn-ghost" id="print-reload"><i class="ri-refresh-line"></i> Neu laden</button>
+      </div>
       <div class="card">
-        <h2>Datei</h2>
-        <input type="file" id="print-file" accept=".pdf,.jpg,.jpeg,.png,.txt,.ps">
-        <div class="grid2" style="margin-top:16px">
-          <div><label for="print-queue">Drucker</label><select id="print-queue"></select></div>
-          <div><label for="print-copies">Kopien</label><input id="print-copies" type="number" min="1" max="99" value="1"></div>
+        <label class="field-label">Datei</label>
+        <div class="filedrop" id="filedrop">
+          <i class="ri-file-upload-line"></i>
+          <div style="min-width:0">
+            <div class="filedrop-text" id="filedrop-name">Datei wählen oder hierher ziehen</div>
+            <div class="filedrop-meta" id="filedrop-meta">PDF, JPEG</div>
+          </div>
+          <input type="file" id="print-file" accept=".pdf,.jpg,.jpeg,.png,.txt" class="hidden">
         </div>
-        <div class="grid2" id="print-options" style="margin-top:14px"></div>
-        <div class="row" style="margin-top:18px">
-          <button class="btn" id="print-go"><i class="fa-solid fa-print"></i> Drucken</button>
-          <button class="btn ghost" id="print-reload"><i class="fa-solid fa-rotate"></i> Optionen neu laden</button>
+        <div class="grid" style="margin-top:1.1rem">
+          <div><label class="field-label" for="sel-printer">Drucker</label><div class="select" id="sel-printer"></div></div>
+          <div><label class="field-label" for="print-copies">Kopien</label><input class="input" id="print-copies" type="number" min="1" max="99" value="1"></div>
         </div>
-        <div id="print-result" style="margin-top:14px"></div>
+        <div class="grid" id="print-options" style="margin-top:.9rem"></div>
+        <div class="row" style="margin-top:1.3rem">
+          <button class="btn-primary" id="print-go"><i class="ri-printer-line"></i> Drucken</button>
+        </div>
+        <div id="print-result" style="margin-top:1rem"></div>
       </div>
     </section>
 
     <section data-panel="scan" class="hidden">
-      <h1>Scannen</h1>
+      <div class="page-head"><h1>Scannen</h1>
+        <span class="pill" id="scan-state"><i class="ri-information-line"></i><span class="pill-text">Gerät</span></span>
+      </div>
       <div class="card">
-        <div class="grid2">
-          <div><label for="scan-host">Scanner</label><select id="scan-host"></select></div>
-          <div><label for="scan-source">Vorlage</label><select id="scan-source"></select></div>
-          <div><label for="scan-color">Farbe</label><select id="scan-color"></select></div>
-          <div><label for="scan-res">Auflösung</label><select id="scan-res"></select></div>
-          <div><label for="scan-format">Format</label><select id="scan-format"></select></div>
-          <div><label for="scan-intent">Vorlagenart</label><select id="scan-intent"></select></div>
-          <div><label for="scan-size">Scanbereich</label><select id="scan-size"></select></div>
-          <div><label for="scan-duplex">Beidseitig</label><select id="scan-duplex"><option value="0">Nein</option><option value="1">Ja</option></select></div>
+        <div class="grid">
+          <div><label class="field-label">Scanner</label><div class="select" id="sel-scanner"></div></div>
+          <div><label class="field-label">Vorlage</label><div class="select" id="sel-source"></div></div>
+          <div><label class="field-label">Farbe</label><div class="select" id="sel-color"></div></div>
+          <div><label class="field-label">Auflösung</label><div class="select" id="sel-res"></div></div>
+          <div><label class="field-label">Format</label><div class="select" id="sel-format"></div></div>
+          <div><label class="field-label">Vorlagenart</label><div class="select" id="sel-intent"></div></div>
+          <div><label class="field-label">Scanbereich</label><div class="select" id="sel-size"></div></div>
+          <div><label class="field-label">Beidseitig</label><div class="select" id="sel-duplex"></div></div>
         </div>
-        <div class="row" style="margin-top:18px">
-          <button class="btn" id="scan-go"><i class="fa-solid fa-play"></i> Scan starten</button>
-          <button class="btn ghost" id="scan-status"><i class="fa-solid fa-rotate"></i> Gerätestatus</button>
-          <span id="scan-adf" class="pill"></span>
+        <div class="row" style="margin-top:1.3rem">
+          <button class="btn-primary" id="scan-go"><i class="ri-scan-2-line"></i> Scan starten</button>
+          <button class="btn-secondary" id="scan-status"><i class="ri-signal-wifi-line"></i> Gerät ansprechen</button>
         </div>
-        <div id="scan-result" style="margin-top:14px"></div>
-        <div id="scan-actions" class="row hidden" style="margin-top:14px">
-          <button class="btn ghost sm" id="scan-dl-all"><i class="fa-solid fa-download"></i> Alle Seiten herunterladen</button>
-          <button class="btn ghost sm" id="scan-print"><i class="fa-solid fa-print"></i> Scan drucken</button>
+        <div id="scan-result" style="margin-top:1rem"></div>
+        <div class="row hidden" id="scan-actions" style="margin-top:1rem">
+          <button class="btn-secondary btn-sm" id="scan-dl-all"><i class="ri-download-2-line"></i> Alle herunterladen</button>
+          <button class="btn-secondary btn-sm" id="scan-print"><i class="ri-printer-line"></i> Scan drucken</button>
         </div>
         <div class="pages" id="scan-pages"></div>
       </div>
     </section>
 
-    <section data-panel="devices" class="hidden">
-      <h1>Geräte</h1>
-      <div class="card">
-        <div class="row" style="margin-bottom:14px">
-          <button class="btn ghost sm" id="dev-refresh"><i class="fa-solid fa-rotate"></i> Netz durchsuchen</button>
-          <span id="dev-ssid" class="pill"></span>
-        </div>
-        <h2>Warteschlangen auf diesem Mac</h2>
-        <table id="queue-table"><thead><tr><th>Warteschlange</th><th>Status</th><th>Anschluss</th></tr></thead><tbody></tbody></table>
-        <h2 style="margin-top:22px" id="dev-head">AirPrint im Netz</h2>
-        <table id="dev-table"><thead><tr><th>Gerät</th><th>Host</th><th>Kann</th><th>Status</th></tr></thead><tbody></tbody></table>
-      </div>
-    </section>
-
     <section data-panel="jobs" class="hidden">
-      <h1>Aufträge</h1>
+      <div class="page-head"><h1>Aufträge</h1>
+        <button class="btn-ghost" id="jobs-refresh"><i class="ri-refresh-line"></i> Aktualisieren</button>
+      </div>
       <div class="card">
-        <div class="row" style="margin-bottom:12px">
-          <button class="btn ghost sm" id="jobs-refresh"><i class="fa-solid fa-rotate"></i> Aktualisieren</button>
-        </div>
         <table id="jobs-table"><thead><tr><th>Auftrag</th><th>Nutzer</th><th>Inhalt</th><th>Status</th></tr></thead><tbody></tbody></table>
       </div>
     </section>
 
-    <section data-panel="diagnose" class="hidden">
-      <h1>Diagnose</h1>
-      <div class="card">
-        <div class="row" style="margin-bottom:12px">
-          <button class="btn" id="diag-run"><i class="fa-solid fa-stethoscope"></i> Prüfung starten</button>
-        </div>
-        <div id="diag-out"></div>
+    <section data-panel="status" class="hidden">
+      <div class="page-head"><h1>Status</h1>
+        <button class="btn-ghost" id="status-refresh"><i class="ri-refresh-line"></i> Aktualisieren</button>
       </div>
-    </section>
-
-    <section data-panel="connection" class="hidden">
-      <h1>Verbindung</h1>
       <div class="card">
-        <h2>Weg zum Gerät</h2>
-        <div class="grid2">
-          <div><label for="conn-mode">Verbindung</label><select id="conn-mode">
-            <option value="auto">Automatisch: Warteschlange, sonst Helfer</option>
-            <option value="bridge">Nur lokaler Helfer</option>
-            <option value="relay">Nur Warteschlange</option>
-          </select></div>
+        <div class="card-head"><h2>Prüfung</h2><span style="font-size:.78rem;color:var(--muted)">passiv — weckt den Drucker nicht</span></div>
+        <div id="checks"></div>
+        <div class="row" style="margin-top:1rem">
+          <button class="btn-secondary btn-sm" id="deep-check"><i class="ri-signal-wifi-line"></i> Gerät ansprechen</button>
         </div>
+        <div id="deep-result" style="margin-top:.9rem"></div>
       </div>
-
-      <div class="card" id="conn-local">
-        <h2>Lokaler Helfer</h2>
-        <div class="grid2">
-          <div><label for="conn-url">Adresse</label><input id="conn-url" type="text" value="http://127.0.0.1:7331"></div>
-          <div><label for="conn-token">Token</label><input id="conn-token" type="password" placeholder="aus ~/.roots-print/token"></div>
+      <div class="card">
+        <div class="card-head"><h2>Geräte</h2></div>
+        <table id="dev-table"><thead><tr><th>Gerät</th><th>Adresse</th><th>Kann</th><th>Gemeldet von</th></tr></thead><tbody></tbody></table>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>Verbindung</h2></div>
+        <div class="grid">
+          <div><label class="field-label">Weg zum Gerät</label><div class="select" id="sel-mode"></div></div>
         </div>
-        <div class="row" style="margin-top:16px">
-          <button class="btn" id="conn-save"><i class="fa-solid fa-plug"></i> Verbinden</button>
-          <button class="btn ghost" id="conn-forget"><i class="fa-solid fa-trash"></i> Token löschen</button>
+        <div id="conn-local" style="margin-top:.9rem">
+          <div class="grid">
+            <div><label class="field-label" for="conn-url">Adresse des Helfers</label><input class="input" id="conn-url" type="text"></div>
+            <div><label class="field-label" for="conn-token">Token</label><input class="input" id="conn-token" type="password" placeholder="aus ~/.roots-print/token"></div>
+          </div>
+          <div class="row" style="margin-top:.9rem">
+            <button class="btn-secondary btn-sm" id="conn-save"><i class="ri-plug-line"></i> Verbinden</button>
+            <button class="btn-ghost" id="conn-forget"><i class="ri-delete-bin-line"></i> Token löschen</button>
+          </div>
         </div>
-        <div id="conn-out" style="margin-top:14px"></div>
+        <div id="conn-out" style="margin-top:.9rem"></div>
       </div>
       <div class="card hidden" id="agent-admin">
-        <h2>Agent freischalten</h2>
-        <div class="grid2">
-          <div><label for="agent-name">Name</label><input id="agent-name" type="text" placeholder="Mac mini Büro"></div>
-          <div><label for="agent-hash">Token-Hash</label><input id="agent-hash" type="text" class="mono" placeholder="64 Hex-Zeichen"></div>
+        <div class="card-head"><h2>Agent freischalten</h2></div>
+        <div class="grid">
+          <div><label class="field-label" for="agent-name">Name</label><input class="input" id="agent-name" type="text" placeholder="Mac mini Büro"></div>
+          <div><label class="field-label" for="agent-hash">Token-Hash</label><input class="input" id="agent-hash" type="text" placeholder="64 Hex-Zeichen"></div>
         </div>
-        <div class="row" style="margin-top:16px">
-          <button class="btn" id="agent-add"><i class="fa-solid fa-plus"></i> Eintragen</button>
+        <div class="row" style="margin-top:.9rem">
+          <button class="btn-secondary btn-sm" id="agent-add"><i class="ri-add-line"></i> Eintragen</button>
         </div>
-        <div id="agent-out" style="margin-top:14px"></div>
-        <pre class="mono" style="background:#0f172a;color:#e2e8f0;padding:14px;border-radius:12px;overflow:auto;margin-top:14px">node bridge/roots-print-agent.js --hash</pre>
-      </div>
-
-      <div class="card">
-        <h2>Helfer starten</h2>
-        <p style="font-size:.86rem;color:var(--muted);margin:0 0 10px">Der Browser kann AirPrint-Geräte nicht direkt ansprechen. Der Helfer läuft auf dem eigenen Mac, hört nur auf 127.0.0.1 und verlangt das Token.</p>
-        <pre class="mono" style="background:#0f172a;color:#e2e8f0;padding:14px;border-radius:12px;overflow:auto">git clone https://github.com/pgoutzeris-stack/drucken.git
-cd drucken
-node bridge/roots-print-bridge.js</pre>
-        <p style="font-size:.86rem;color:var(--muted);margin:10px 0 0">Dauerhaft im Hintergrund: <code class="mono">bash bridge/install.sh</code></p>
+        <div id="agent-out" style="margin-top:.9rem"></div>
       </div>
     </section>
   </main>
 </div>
 
-<div id="modal" class="modal hidden">
-  <div class="inner">
-    <header><span id="modal-title">Vorschau</span><button class="btn ghost sm" id="modal-close"><i class="fa-solid fa-xmark"></i></button></header>
-    <div class="content" id="modal-content"></div>
-    <footer><a id="modal-dl" class="btn sm" download><i class="fa-solid fa-download"></i> Herunterladen</a></footer>
+<div id="modal" class="modal-overlay hidden">
+  <div class="modal-box">
+    <div class="modal-head">
+      <span class="modal-title" id="modal-title">Seite</span>
+      <button class="btn-ghost" id="modal-close"><i class="ri-close-line"></i></button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+    <div class="modal-foot">
+      <button class="btn-secondary btn-sm" id="modal-print"><i class="ri-printer-line"></i> Drucken</button>
+      <button class="btn-primary btn-sm" id="modal-dl"><i class="ri-download-2-line"></i> Herunterladen</button>
+    </div>
   </div>
 </div>
 
-<script src="app.js?v=7"></script>
+<script src="app.js?v=8"></script>
 </body>
 </html>

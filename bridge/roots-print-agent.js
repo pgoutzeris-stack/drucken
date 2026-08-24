@@ -27,6 +27,14 @@ const dev = require("./device-lib.js");
 const ipp = require("./ipp.js");
 
 const VERSION = "1.0.0";
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Die mDNS-Suche antwortet nicht immer im ersten Versuch. Was einmal gefunden
+// wurde, bleibt gemerkt — und Scan-Fähigkeiten werden nur einmal geholt, weil
+// der eSCL-Aufruf das Gerät aufweckt.
+const knownHosts = new Map();
+const capsCache = new Map();
 const STATE_DIR = path.join(os.homedir(), ".roots-print");
 const TOKEN_FILE = path.join(STATE_DIR, "agent-token");
 const CONFIG_FILE = path.join(STATE_DIR, "agent.json");
@@ -105,6 +113,33 @@ async function rpc(fn, args, { timeout = 120000 } = {}) {
 
 /* ------------------------------------------------------------- inventory --- */
 
+/** Netzname, in dem der Agent steht — macOS und Linux getrennt abgefragt. */
+async function currentSsid() {
+  if (process.platform === "darwin") {
+    const res = await dev.run("networksetup", ["-getairportnetwork", "en0"], { timeout: 8000 });
+    const m = res.stdout.match(/:\s*(.+)$/m);
+    if (m) return m[1].trim();
+    return null;
+  }
+  const res = await dev.run("iwgetid", ["-r"], { timeout: 8000 });
+  return res.code === 0 && res.stdout.trim() ? res.stdout.trim() : null;
+}
+
+/**
+ * Anwesenheit rein passiv feststellen. Ein Aufruf an IPP oder eSCL weckt das
+ * Gerät aus dem Ruhezustand — es fährt hoch und macht Geräusche. Deshalb zählt
+ * nur, was ohne Zutun ohnehin im Netz steht: die Bonjour-Ankündigung (die bei
+ * schlafenden AirPrint-Geräten der Sleep-Proxy beantwortet) und ein bereits
+ * vorhandener ARP-Eintrag.
+ */
+async function isPresent(host, seenViaMdns) {
+  if (seenViaMdns) return true;
+  if (!host) return null;
+  const arp = await dev.run("arp", ["-n", host], { timeout: 5000 });
+  if (arp.code === 0 && /(([0-9a-f]{1,2}:){5}[0-9a-f]{1,2})/i.test(arp.stdout)) return true;
+  return null; // keine Aussage — nicht als "offline" behaupten
+}
+
 /**
  * Läuft der Agent nicht im gleichen Netz wie der Drucker — etwa auf einer
  * Cloud-Maschine, die per WireGuard in das Büronetz eingewählt ist —, dann
@@ -141,7 +176,12 @@ async function staticInventory(entries) {
         options = DIRECT_OPTIONS;
       }
     }
-    const scanCaps = entry.canScan === false ? null : await dev.scannerCapabilities(host).catch(() => null);
+    // Nur einmal pro Lauf abfragen: der eSCL-Aufruf weckt das Gerät.
+    let scanCaps = capsCache.get(queue) || null;
+    if (!scanCaps && entry.canScan !== false) {
+      scanCaps = await dev.scannerCapabilities(host).catch(() => null);
+      if (scanCaps) capsCache.set(queue, scanCaps);
+    }
     const live = printers.find((p) => p.name === queue);
     out.push({
       queue,
@@ -154,6 +194,7 @@ async function staticInventory(entries) {
       can_scan: !!scanCaps,
       scan_caps: scanCaps,
       print_host: direct ? host : null,
+      reachable: await isPresent(host, false),
     });
   }
   return out;
@@ -163,19 +204,27 @@ async function inventory() {
   const cfg = config();
   if (Array.isArray(cfg.printers) && cfg.printers.length) return staticInventory(cfg.printers);
   const { printers } = await dev.listPrinters();
-  const devices = await dev.resolveIppHosts().catch(() => []);
+  let devices = await dev.resolveIppHosts().catch(() => []);
+  if (!devices.length) {
+    await sleep(1500);
+    devices = await dev.resolveIppHosts().catch(() => []);
+  }
   const out = [];
   for (const p of printers) {
-    const match = devices.find((d) => d.instance === p.dnssdInstance) || (devices.length === 1 ? devices[0] : null);
+    let match = devices.find((d) => d.instance === p.dnssdInstance) || (devices.length === 1 ? devices[0] : null);
+    if (match) knownHosts.set(p.name, match);
+    else match = knownHosts.get(p.name) || null;
     let options = [];
     try {
       options = (await dev.printerOptions(p.name)).options;
     } catch (e) {
       /* Ohne Optionen bleibt der Drucker nutzbar */
     }
-    let scanCaps = null;
-    if (match?.canScan && match.host) {
+    let scanCaps = capsCache.get(p.name) || null;
+    if (!scanCaps && match?.canScan && match.host) {
+      // Einmal pro Agentenlauf: der eSCL-Aufruf weckt den Scanner.
       scanCaps = await dev.scannerCapabilities(match.host).catch(() => null);
+      if (scanCaps) capsCache.set(p.name, scanCaps);
     }
     out.push({
       queue: p.name,
@@ -187,6 +236,7 @@ async function inventory() {
       scan_host: match?.host || null,
       can_scan: !!(match?.canScan && match.host),
       scan_caps: scanCaps,
+      reachable: await isPresent(match?.host || null, !!match),
     });
   }
   return out;
@@ -283,16 +333,18 @@ async function hello() {
     log(`Drucker konnten nicht gelesen werden: ${e.message}`);
     return [];
   });
+  const ssid = await currentSsid().catch(() => null);
   await rpc("print_agent_hello", {
     p_token: TOKEN,
     p_hostname: os.hostname(),
     p_version: VERSION,
     p_printers: printers,
+    p_meta: { ssid },
   });
   lastHello = Date.now();
   if (!enrolled) {
     enrolled = true;
-    log(`Freigeschaltet. ${printers.length} Warteschlange(n) gemeldet: ${printers.map((p) => p.queue).join(", ") || "keine"}`);
+    log(`Freigeschaltet. Netz ${ssid || "unbekannt"}. ${printers.length} Warteschlange(n): ${printers.map((p) => `${p.queue}${p.reachable === false ? " (nicht erreichbar)" : ""}`).join(", ") || "keine"}`);
   }
   return printers;
 }
@@ -351,8 +403,6 @@ async function main() {
     await sleep(POLL_MS);
   }
 }
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 process.on("SIGINT", () => {
   stopping = true;

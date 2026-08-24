@@ -304,7 +304,7 @@ async function printFile(filePath, { queue, copies, options }) {
   return { jobId, raw: res.stdout.trim() };
 }
 
-async function diagnose(host) {
+async function diagnose(host, { passive = false } = {}) {
   const checks = [];
   const wifi = await run("networksetup", ["-getairportnetwork", "en0"]);
   const ssid = (wifi.stdout.match(/:\s*(.+)$/m) || [])[1]?.trim() || null;
@@ -328,7 +328,9 @@ async function diagnose(host) {
     hint: mdns.length ? null : "Drucker aus dem Ruhezustand wecken. Getrenntes Gastnetz oder aktivierte AP-Isolation im Router blockiert mDNS.",
   });
 
-  if (host) {
+  // Passiv heißt: kein Paket an das Gerät. Ping und eSCL wecken einen
+  // schlafenden Drucker auf, er fährt hoch und macht Geräusche.
+  if (host && !passive) {
     const h = safeHost(host);
     const ping = await run("ping", ["-c", "2", "-W", "1500", h], { timeout: 8000 });
     const okPing = ping.code === 0;

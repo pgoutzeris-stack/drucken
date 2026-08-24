@@ -2,129 +2,195 @@
  * ROOTS Print – frontend.
  *
  * Zwei Wege zum Gerät, gleiche Oberfläche:
+ *   relay   Warteschlange in Supabase, abgearbeitet vom Agenten im Büro.
+ *   bridge  Lokaler Helfer auf 127.0.0.1, nur auf dem eigenen Mac.
  *
- *   bridge  Der lokale Helfer auf 127.0.0.1. Schnell, ohne Cloud, aber nur auf
- *           dem eigenen Mac und nur in Browsern, die den Zugriff erlauben.
- *   relay   Warteschlange in Supabase. Der Agent im Büro arbeitet sie ab. Läuft
- *           überall — Safari, Mac-App, Handy, von zuhause.
- *
- * Der Helfer hat Vorrang, wenn er antwortet; sonst übernimmt der Relay.
+ * Im Intranet läuft das Tool tokenlos im sandboxed iframe: Identität und alle
+ * Datenzugriffe laufen über den Broker des Intranets.
  */
 (function () {
   "use strict";
 
   const CFG = window.ROOTS_PRINT_CONFIG;
-  const LS_TOKEN = "roots-print-token";
-  const LS_URL = "roots-print-url";
-  const LS_MODE = "roots-print-mode";
+  const LS = { token: "roots-print-token", url: "roots-print-url", mode: "roots-print-mode" };
 
-  /**
-   * In einem sandboxed iframe (so hängt die Kachel im Intranet) wirft jeder
-   * Zugriff auf localStorage eine SecurityError-Ausnahme. Ohne diese Kapselung
-   * bricht das Skript beim Start ab — sichtbar als Anmeldemaske, die nie
-   * verschwindet.
-   */
-  const memoryStore = new Map();
-  function lsGet(key) {
+  /* --------------------------------------------------------------- storage --- */
+
+  // Im sandboxed iframe wirft jeder localStorage-Zugriff SecurityError.
+  const mem = new Map();
+  const lsGet = (k) => {
     try {
-      return window.localStorage.getItem(key);
+      return window.localStorage.getItem(k);
     } catch (e) {
-      return memoryStore.has(key) ? memoryStore.get(key) : null;
+      return mem.has(k) ? mem.get(k) : null;
     }
-  }
-  function lsSet(key, value) {
-    memoryStore.set(key, value);
+  };
+  const lsSet = (k, v) => {
+    mem.set(k, v);
     try {
-      window.localStorage.setItem(key, value);
+      window.localStorage.setItem(k, v);
     } catch (e) {
-      /* Sandbox: der Wert lebt nur in dieser Sitzung */
+      /* nur für diese Sitzung */
     }
-  }
-  function lsDel(key) {
-    memoryStore.delete(key);
+  };
+  const lsDel = (k) => {
+    mem.delete(k);
     try {
-      window.localStorage.removeItem(key);
+      window.localStorage.removeItem(k);
     } catch (e) {
-      /* Sandbox: es gab nichts zu löschen */
+      /* nichts zu löschen */
     }
-  }
+  };
 
   const state = {
-    mode: lsGet(LS_MODE) || "auto",
-    active: null, // 'bridge' | 'relay'
+    mode: lsGet(LS.mode) || "auto",
+    active: null,
     bridge: null,
     bridgeIssue: null,
-    token: lsGet(LS_TOKEN) || "",
-    url: lsGet(LS_URL) || CFG.BRIDGE_ORIGINS[0],
+    token: lsGet(LS.token) || "",
+    url: lsGet(LS.url) || CFG.BRIDGE_ORIGINS[0],
     printers: [],
+    agents: [],
     devices: [],
     caps: null,
-    scan: null,
     scanPages: [],
+    scanJob: null,
     pollTimer: null,
     profile: null,
+    file: null,
   };
 
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-  const bytes = (n) => (n > 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB");
+  const kb = (n) => (n > 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB");
   const relay = () => window.RootsPrintRelay;
+  const AGENT_STALE = 5 * 60 * 1000;
 
-  /* ------------------------------------------------------------- messages --- */
+  /* ---------------------------------------------------------------- notice --- */
 
-  const NETWORK_HINTS = {
-    offline: {
-      message: "Der Helfer auf diesem Mac antwortet nicht.",
-      hint: "Ohne Helfer läuft alles über die Warteschlange in Supabase. Direkt drucken: <code>node bridge/roots-print-bridge.js</code>.",
-    },
-    blocked: {
-      message: "Der Browser blockiert den Zugriff auf 127.0.0.1.",
-      hint: "Safari erlaubt das von einer HTTPS-Seite nicht. Das Tool nutzt deshalb die Warteschlange in Supabase.",
-    },
-  };
+  function toast(message, kind = "info") {
+    const el = document.createElement("div");
+    el.className = "toast" + (kind === "err" ? " error" : kind === "ok" ? " success" : "");
+    el.innerHTML = `<i class="ri-${kind === "err" ? "error-warning-line" : kind === "ok" ? "checkbox-circle-line" : "information-line"}"></i><span>${esc(message)}</span>`;
+    $("#toasts").appendChild(el);
+    setTimeout(() => el.remove(), 5000);
+  }
 
-  function msg(target, kind, message, hint) {
+  function note(target, kind, message, hint) {
     const el = typeof target === "string" ? $(target) : target;
     if (!el) return;
-    const icon = kind === "err" ? "fa-triangle-exclamation" : kind === "ok" ? "fa-circle-check" : "fa-circle-info";
-    el.innerHTML = `<div class="msg ${kind}"><i class="fa-solid ${icon}"></i><div><strong>${esc(message)}</strong>${hint ? `<span class="hint">${hint}</span>` : ""}</div></div>`;
+    const icon = kind === "err" ? "error-warning-line" : kind === "ok" ? "checkbox-circle-line" : "information-line";
+    el.innerHTML = `<div class="note ${kind}"><i class="ri-${icon}"></i><div><strong>${esc(message)}</strong>${hint ? `<span class="sub">${hint}</span>` : ""}</div></div>`;
   }
 
   const clear = (sel) => {
     const el = $(sel);
     if (el) el.innerHTML = "";
   };
-  const showError = (sel, e) => msg(sel, "err", e.message || "Unbekannter Fehler", e.hint || null);
+  const fail = (sel, e) => note(sel, "err", e.message || "Unbekannter Fehler", e.hint || null);
 
-  /* --------------------------------------------------------------- bridge --- */
+  /* ---------------------------------------------------------------- select --- */
+
+  /**
+   * Auswahlfeld im ROOTS-Design. Native <select> übernimmt das Aussehen des
+   * Betriebssystems und passt damit nicht zum Rest der Oberfläche.
+   */
+  const selects = new Map();
+
+  function makeSelect(id, { options = [], value = null, placeholder = "Bitte wählen", onChange, disabled = false } = {}) {
+    const host = $("#" + id);
+    if (!host) return null;
+    const st = selects.get(id) || {};
+    const current = value != null ? value : st.value;
+    const chosen = options.find((o) => String(o.value) === String(current)) || options[0] || null;
+    const entry = { id, options, value: chosen ? chosen.value : null, onChange: onChange || st.onChange, disabled };
+    selects.set(id, entry);
+
+    host.classList.add("select");
+    host.innerHTML = `
+      <button type="button" class="select-trigger" aria-haspopup="listbox" aria-expanded="false" ${disabled || !options.length ? "disabled" : ""}>
+        <span class="sel-label">${esc(chosen ? chosen.label : placeholder)}</span>
+        <i class="ri-arrow-down-s-line"></i>
+      </button>
+      <div class="select-menu" role="listbox">
+        ${options.length
+          ? options
+              .map(
+                (o) =>
+                  `<button type="button" class="select-option" role="option" data-value="${esc(o.value)}" aria-selected="${String(o.value) === String(entry.value)}">${esc(o.label)}</button>`
+              )
+              .join("")
+          : `<div class="select-empty">${esc(placeholder)}</div>`}
+      </div>`;
+
+    const trigger = $(".select-trigger", host);
+    trigger.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const open = host.classList.contains("open");
+      closeAllSelects();
+      if (!open) {
+        host.classList.add("open");
+        trigger.setAttribute("aria-expanded", "true");
+      }
+    });
+    $$(".select-option", host).forEach((opt) =>
+      opt.addEventListener("click", () => {
+        const val = opt.dataset.value;
+        closeAllSelects();
+        if (String(val) === String(entry.value)) return;
+        entry.value = val;
+        makeSelect(id, { options, value: val, placeholder, onChange: entry.onChange, disabled });
+        entry.onChange?.(val);
+      })
+    );
+    return entry;
+  }
+
+  function closeAllSelects() {
+    $$(".select.open").forEach((s) => {
+      s.classList.remove("open");
+      $(".select-trigger", s)?.setAttribute("aria-expanded", "false");
+    });
+  }
+
+  const selValue = (id) => selects.get(id)?.value ?? null;
+
+  document.addEventListener("click", closeAllSelects);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      closeAllSelects();
+      $("#modal").classList.add("hidden");
+    }
+  });
+
+  /* ---------------------------------------------------------------- bridge --- */
+
+  const NET_HINT = {
+    offline: { message: "Der lokale Helfer antwortet nicht.", hint: "Auf dem eigenen Mac: <code>node bridge/roots-print-bridge.js</code>." },
+    blocked: { message: "Dieser Browser lässt keinen Zugriff auf 127.0.0.1 zu.", hint: "Das Tool nutzt deshalb die Warteschlange." },
+  };
 
   async function call(path, { method = "GET", body, headers = {}, raw = false, timeout = 200000 } = {}) {
-    if (!state.token) throw { code: "no_token", message: "Es ist kein Token für den Helfer gesetzt.", hint: "Unter „Verbindung“ das Token aus <code>~/.roots-print/token</code> einsetzen." };
+    if (!state.token) throw { message: "Für den Helfer ist kein Token gesetzt.", hint: "Unter Status › Verbindung das Token aus <code>~/.roots-print/token</code> einsetzen." };
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeout);
     let res;
     try {
       res = await fetch(state.url + path, { method, body, signal: ctrl.signal, headers: { Authorization: "Bearer " + state.token, ...headers } });
     } catch (err) {
-      if (err.name === "AbortError") throw { code: "timeout", message: "Der Helfer hat zu lange nicht geantwortet.", hint: "Gerät wach? Scan mit weniger Seiten oder niedrigerer Auflösung erneut versuchen." };
-      const kind = location.protocol === "https:" ? "blocked" : "offline";
-      throw { code: kind, ...NETWORK_HINTS[kind] };
+      if (err.name === "AbortError") throw { message: "Der Helfer hat zu lange nicht geantwortet.", hint: "Erneut versuchen, bei Scans mit niedrigerer Auflösung." };
+      throw NET_HINT[location.protocol === "https:" ? "blocked" : "offline"];
     } finally {
       clearTimeout(t);
     }
     if (raw) {
-      if (!res.ok) throw await asError(res);
+      if (!res.ok) throw (await res.json().catch(() => null))?.error || { message: `Helfer antwortete mit HTTP ${res.status}.` };
       return res;
     }
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw data.error || { code: "http_" + res.status, message: `Helfer antwortete mit HTTP ${res.status}.` };
+    if (!res.ok) throw data.error || { message: `Helfer antwortete mit HTTP ${res.status}.` };
     return data;
-  }
-
-  async function asError(res) {
-    const data = await res.json().catch(() => null);
-    return data?.error || { code: "http_" + res.status, message: `HTTP ${res.status}` };
   }
 
   async function detectBridge(onlyGiven) {
@@ -137,7 +203,7 @@
         const info = await res.json();
         state.url = url;
         state.bridge = info;
-        lsSet(LS_URL, url);
+        lsSet(LS.url, url);
         if (!info.tokenValid) {
           state.bridgeIssue = "token";
           return false;
@@ -152,26 +218,58 @@
     return false;
   }
 
-  function renderModePill() {
-    const pill = $("#bridge-pill");
-    if (state.active === "bridge") {
-      pill.className = "pill ok";
-      pill.innerHTML = `<i class="fa-solid fa-bolt"></i> Helfer ${esc(state.bridge?.version || "")}`;
-      return;
-    }
-    const online = state.printers.some((p) => p.agentOnline);
-    pill.className = "pill " + (online ? "ok" : "warn");
-    pill.innerHTML = `<i class="fa-solid fa-cloud"></i> Warteschlange${online ? "" : " · Agent offline"}`;
+  /* ----------------------------------------------------------------- pills --- */
+
+  function setPill(id, kind, icon, text, title) {
+    const el = $(id);
+    if (!el) return;
+    el.className = "pill" + (kind ? " " + kind : "");
+    el.innerHTML = `<i class="ri-${icon}"></i><span class="pill-text">${esc(text)}</span>`;
+    el.title = title || text;
   }
 
-  /**
-   * Reihenfolge im Automatikmodus: erst die Warteschlange, denn dort läuft der
-   * Agent im Büro und alle bekommen dasselbe Verhalten. Nur wenn dort kein Agent
-   * antwortet, greift der lokale Helfer als Rückfall.
-   */
+  function agentOnline(a) {
+    return !!(a?.last_seen_at && Date.now() - Date.parse(a.last_seen_at) < AGENT_STALE);
+  }
+
+  function renderPills() {
+    const printer = state.printers[0] || null;
+    const live = state.agents.filter(agentOnline);
+
+    if (state.active === "bridge") {
+      const dev = state.devices[0] || null;
+      if (printer) setPill("#pill-printer", dev ? "ok" : "warn", dev ? "printer-line" : "printer-line", printer.display_name || printer.queue, dev ? `Im Netz gemeldet: ${dev.host}` : "Warteschlange vorhanden, Gerät nicht im Netz gemeldet");
+      else setPill("#pill-printer", "bad", "printer-off-line", "Kein Drucker");
+      setPill("#pill-wifi", state.ssid ? "ok" : "warn", "wifi-line", state.ssid || "Netz unbekannt");
+      setPill("#pill-route", "ok", "flashlight-line", "Lokaler Helfer");
+      return;
+    }
+
+    if (!printer) {
+      setPill("#pill-printer", "bad", "printer-off-line", "Kein Drucker gemeldet");
+    } else if (printer.reachable === true) {
+      setPill("#pill-printer", "ok", "printer-line", printer.display_name || printer.queue, `Im Netz gemeldet · Stand ${when(printer.checked_at)}`);
+    } else {
+      setPill("#pill-printer", "warn", "printer-line", printer.display_name || printer.queue, "Gerät schläft oder meldet sich nicht im Netz");
+    }
+
+    const ssid = state.agents.find((a) => a.ssid)?.ssid;
+    setPill("#pill-wifi", ssid ? "ok" : "warn", "wifi-line", ssid || "Netz unbekannt", ssid ? `Netz des Agenten: ${ssid}` : "Der Agent hat kein Netz gemeldet");
+    setPill("#pill-route", live.length ? "ok" : "bad", live.length ? "cloud-line" : "cloud-off-line", live.length ? "Warteschlange" : "Agent offline", live.length ? `Agent ${live[0].name}` : "Kein Agent hat sich in den letzten fünf Minuten gemeldet");
+  }
+
+  function when(iso) {
+    if (!iso) return "unbekannt";
+    const diff = Date.now() - Date.parse(iso);
+    if (diff < 90000) return "gerade";
+    if (diff < 3600000) return `vor ${Math.round(diff / 60000)} min`;
+    return new Date(iso).toLocaleString("de-DE");
+  }
+
+  /* -------------------------------------------------------------- mode --- */
+
   async function pickMode() {
     if (TOKENLESS) {
-      // Im sandboxed iframe ist 127.0.0.1 ohnehin nicht erreichbar.
       state.active = "relay";
       return;
     }
@@ -181,85 +279,72 @@
     }
     if (state.mode === "bridge") {
       state.active = "bridge";
-      const ok = await detectBridge();
-      if (!ok) {
-        if (state.bridgeIssue === "token") msg("#banner", "err", "Der Helfer läuft, akzeptiert das Token aber nicht.", 'Token aus <code>~/.roots-print/token</code> unter „Verbindung“ einsetzen.');
-        else {
-          const kind = location.protocol === "https:" ? "blocked" : "offline";
-          msg("#banner", "err", NETWORK_HINTS[kind].message, NETWORK_HINTS[kind].hint);
-        }
+      if (!(await detectBridge())) {
+        if (state.bridgeIssue === "token") note("#banner", "err", "Der Helfer läuft, akzeptiert das Token aber nicht.", "Token unter Status › Verbindung einsetzen.");
+        else note("#banner", "err", NET_HINT[location.protocol === "https:" ? "blocked" : "offline"].message, NET_HINT[location.protocol === "https:" ? "blocked" : "offline"].hint);
       }
       return;
     }
-
-    const agents = await relay().agentList();
-    const live = agents.some((a) => a.last_seen_at && Date.now() - Date.parse(a.last_seen_at) < relay().AGENT_STALE_MS);
-    if (live) {
+    state.agents = await relay().agentList();
+    if (state.agents.some(agentOnline)) {
       state.active = "relay";
       clear("#banner");
       return;
     }
-    const ok = await detectBridge();
-    if (ok) {
+    if (await detectBridge()) {
       state.active = "bridge";
-      msg("#banner", "info", "Der Agent im Büro meldet sich nicht — es läuft über den lokalen Helfer.", "Aufträge gehen direkt an den Drucker in diesem Netz, nicht über die Warteschlange.");
+      note("#banner", "info", "Kein Agent im Büro gemeldet — es läuft über den lokalen Helfer.", "Aufträge gehen direkt an den Drucker in diesem Netz.");
       return;
     }
     state.active = "relay";
-    msg("#banner", "err", "Weder der Agent im Büro noch ein lokaler Helfer antwortet.", agents.length ? "Auf dem Büro-Rechner: <code>node bridge/roots-print-agent.js</code>. Aufträge bleiben bis dahin in der Warteschlange." : "Es ist kein Agent freigeschaltet — siehe „Verbindung“.");
+    note("#banner", "err", "Kein Agent im Büro und kein lokaler Helfer.", state.agents.length ? "Auf dem Büro-Rechner: <code>node bridge/roots-print-agent.js</code>. Aufträge warten bis dahin." : "Es ist kein Agent freigeschaltet — siehe Status › Agent freischalten.");
   }
 
   /* ------------------------------------------------------------- printers --- */
 
-  const OPTION_LABELS = { ColorModel: "Farbe", Duplex: "Beidseitig", PageSize: "Papierformat", InputSlot: "Papierquelle", MediaType: "Medium", Collate: "Sortieren", cupsPrintQuality: "Qualität", cupsFinishingTemplate: "Finishing" };
-  const VALUE_LABELS = { RGB: "Farbe", Gray: "Graustufen", Gray16: "Graustufen (16 bit)", None: "Aus", DuplexNoTumble: "Ein (lange Kante)", DuplexTumble: "Ein (kurze Kante)", True: "Ja", False: "Nein", auto: "Automatisch", "by-pass-tray": "Mehrzweckfach", "tray-1": "Kassette 1", none: "Keins" };
+  const OPT_LABEL = { ColorModel: "Farbe", Duplex: "Beidseitig", PageSize: "Papierformat", InputSlot: "Papierquelle", MediaType: "Medium", Collate: "Sortieren", cupsPrintQuality: "Qualität", cupsFinishingTemplate: "Finishing" };
+  const VAL_LABEL = { RGB: "Farbe", Gray: "Graustufen", Gray16: "Graustufen 16 bit", None: "Aus", DuplexNoTumble: "Lange Kante", DuplexTumble: "Kurze Kante", True: "Ja", False: "Nein", auto: "Automatisch", "by-pass-tray": "Mehrzweckfach", "tray-1": "Kassette 1", none: "Keins" };
 
   async function loadPrinters() {
     try {
       if (state.active === "bridge") {
         const data = await call("/api/printers");
-        state.printers = data.printers.map((p) => ({ id: p.name, queue: p.name, display_name: p.name, state: p.state, state_text: p.stateText, is_default: p.isDefault, device: p.device, options: null, agentOnline: true }));
+        state.printers = data.printers.map((p) => ({ id: p.name, queue: p.name, display_name: p.name, state: p.state, state_text: p.stateText, is_default: p.isDefault, options: null }));
+        state.agents = [];
       } else {
-        state.printers = (await relay().printers()).map((p) => ({ ...p, device: null }));
+        state.agents = await relay().agentList();
+        state.printers = await relay().printers();
       }
-      renderModePill();
-      const sel = $("#print-queue");
-      sel.innerHTML = state.printers
-        .map((p) => `<option value="${esc(p.id)}"${p.is_default ? " selected" : ""}>${esc(p.display_name || p.queue)}${p.is_default ? " (Standard)" : ""}${p.agentOnline ? "" : " — Agent offline"}</option>`)
-        .join("");
-      renderQueueTable();
-      if (!state.printers.length) {
-        msg("#print-result", "err", state.active === "bridge" ? "macOS kennt auf diesem Mac keinen Drucker." : "In der Warteschlange ist kein Drucker gemeldet.", state.active === "bridge" ? "Systemeinstellungen › Drucker & Scanner › Drucker hinzufügen." : "Der Agent im Büro muss laufen und freigeschaltet sein — siehe „Verbindung“.");
-        $("#print-options").innerHTML = "";
-        return;
-      }
-      const offline = state.printers.every((p) => !p.agentOnline);
-      if (state.active === "relay" && offline) {
-        msg("#banner", "err", "Der Agent im Büro hat sich zuletzt vor über fünf Minuten gemeldet.", "Aufträge bleiben in der Warteschlange, bis er wieder läuft.");
-      }
-      await loadOptions();
-      fillScanHosts();
     } catch (e) {
-      showError("#print-result", e);
+      fail("#print-result", e);
+      state.printers = [];
     }
+
+    const options = state.printers.map((p) => ({ value: p.id, label: (p.display_name || p.queue) + (p.is_default ? " · Standard" : "") }));
+    makeSelect("sel-printer", {
+      options,
+      value: (state.printers.find((p) => p.is_default) || state.printers[0])?.id,
+      placeholder: "Kein Drucker gemeldet",
+      onChange: () => {
+        loadOptions();
+        loadJobs();
+      },
+    });
+
+    renderPills();
+    renderDevices();
+
+    if (!state.printers.length) {
+      $("#print-options").innerHTML = "";
+      note("#print-result", "err", state.active === "bridge" ? "Dieser Mac kennt keinen Drucker." : "In der Warteschlange ist kein Drucker gemeldet.", state.active === "bridge" ? "Systemeinstellungen › Drucker & Scanner." : "Der Agent im Büro muss laufen und freigeschaltet sein.");
+      return;
+    }
+    clear("#print-result");
+    await loadOptions();
+    fillScanners();
   }
 
-  function currentPrinter() {
-    const id = $("#print-queue").value;
-    return state.printers.find((p) => String(p.id) === id) || null;
-  }
-
-  function renderQueueTable() {
-    const body = $("#queue-table tbody");
-    if (!body) return;
-    body.innerHTML = state.printers
-      .map((p) => {
-        const cls = p.state === "idle" ? "ok" : p.state === "disabled" ? "err" : "warn";
-        const via = state.active === "bridge" ? "Helfer" : `${esc(p.agent?.name || "Agent")}${p.agentOnline ? "" : " (offline)"}`;
-        return `<tr><td><strong>${esc(p.display_name || p.queue)}</strong>${p.is_default ? ' <span class="pill">Standard</span>' : ""}</td><td><span class="pill ${cls}">${esc(p.state_text || p.state || "?")}</span></td><td>${via}</td></tr>`;
-      })
-      .join("");
-  }
+  const currentPrinter = () => state.printers.find((p) => String(p.id) === String(selValue("sel-printer"))) || null;
 
   async function loadOptions() {
     const printer = currentPrinter();
@@ -267,208 +352,177 @@
     if (!printer) return;
     let options = printer.options;
     if (state.active === "bridge") {
-      wrap.innerHTML = '<div style="color:var(--muted);font-size:.84rem"><i class="fa-solid fa-circle-notch spin"></i> Optionen werden gelesen</div>';
+      wrap.innerHTML = `<div style="color:var(--muted);font-size:.85rem"><i class="ri-loader-4-line spin"></i> Optionen werden gelesen</div>`;
       try {
         options = (await call("/api/printer/options?queue=" + encodeURIComponent(printer.queue))).options;
         printer.options = options;
       } catch (e) {
         wrap.innerHTML = "";
-        return showError("#print-result", e);
+        return fail("#print-result", e);
       }
     }
     const usable = (options || []).filter((o) => (o.values || []).length > 1);
-    wrap.innerHTML = usable.length
-      ? usable
-          .map((o) => {
-            const label = OPTION_LABELS[o.key] || o.label;
-            const opts = [...new Set(o.values)].map((v) => `<option value="${esc(v)}"${v === o.current ? " selected" : ""}>${esc(VALUE_LABELS[v] || v)}</option>`).join("");
-            return `<div><label for="opt-${esc(o.key)}">${esc(label)}</label><select id="opt-${esc(o.key)}" data-opt="${esc(o.key)}">${opts}</select></div>`;
-          })
-          .join("")
-      : `<div style="color:var(--muted);font-size:.84rem">Für diesen Drucker sind keine Optionen gemeldet.</div>`;
+    wrap.innerHTML = usable.map((o) => `<div><label class="field-label">${esc(OPT_LABEL[o.key] || o.label)}</label><div class="select" id="opt-${esc(o.key)}"></div></div>`).join("");
+    usable.forEach((o) =>
+      makeSelect("opt-" + o.key, {
+        options: [...new Set(o.values)].map((v) => ({ value: v, label: VAL_LABEL[v] || v })),
+        value: o.current || o.values[0],
+      })
+    );
+  }
+
+  function chosenOptions() {
+    const out = {};
+    for (const [id, entry] of selects) {
+      if (id.startsWith("opt-")) out[id.slice(4)] = entry.value;
+    }
+    return out;
   }
 
   async function doPrint(file, filename) {
     const printer = currentPrinter();
-    if (!printer) return msg("#print-result", "err", "Kein Drucker gewählt.", "Erst einen Drucker in der Liste auswählen.");
-    const options = {};
-    $$("#print-options select").forEach((s) => (options[s.dataset.opt] = s.value));
+    if (!printer) return note("#print-result", "err", "Kein Drucker gewählt.");
     const copies = $("#print-copies").value || "1";
-    msg("#print-result", "info", "Auftrag wird übergeben…");
+    const btn = $("#print-go");
+    btn.disabled = true;
+    note("#print-result", "info", "Auftrag wird übergeben…");
     try {
       if (state.active === "bridge") {
-        const qs = new URLSearchParams({ queue: printer.queue, copies, options: JSON.stringify(options) });
-        const res = await call("/api/print?" + qs.toString(), {
-          method: "POST",
-          body: file,
-          headers: { "Content-Type": "application/octet-stream", "X-Roots-Filename": filename.replace(/[^\x20-\x7e]/g, "_") },
-        });
-        msg("#print-result", "ok", `An „${printer.queue}“ übergeben.`, res.jobId ? `Auftrag <code>${esc(res.jobId)}</code>` : null);
-        loadJobs();
-        return;
+        const qs = new URLSearchParams({ queue: printer.queue, copies, options: JSON.stringify(chosenOptions()) });
+        const res = await call("/api/print?" + qs, { method: "POST", body: file, headers: { "Content-Type": "application/octet-stream", "X-Roots-Filename": filename.replace(/[^\x20-\x7e]/g, "_") } });
+        note("#print-result", "ok", `An ${printer.queue} übergeben.`, res.jobId ? `Auftrag <code>${esc(res.jobId)}</code>` : null);
+      } else {
+        const jobId = await relay().submitPrint(printer.id, file, filename, { copies: Number(copies), options: chosenOptions() });
+        note("#print-result", "info", "In der Warteschlange. Der Agent übernimmt.");
+        const done = await relay().waitFor(jobId, null, { timeoutMs: 180000 });
+        if (done.status === "error") throw done.error || { message: "Der Auftrag ist fehlgeschlagen." };
+        note("#print-result", "ok", `An ${printer.display_name || printer.queue} gedruckt.`, done.result?.jobId ? `Auftrag <code>${esc(done.result.jobId)}</code>` : null);
       }
-      const jobId = await relay().submitPrint(printer.id, file, filename, { copies: Number(copies), options });
-      msg("#print-result", "info", "In der Warteschlange. Warte auf den Agenten…");
-      const done = await relay().waitFor(jobId, null, { timeoutMs: 180000 });
-      if (done.status === "error") return showError("#print-result", done.error || { message: "Der Auftrag ist fehlgeschlagen." });
-      msg("#print-result", "ok", `An „${printer.display_name || printer.queue}“ gedruckt.`, done.result?.jobId ? `Auftrag <code>${esc(done.result.jobId)}</code>` : null);
+      toast("Druckauftrag übergeben", "ok");
       loadJobs();
     } catch (e) {
-      showError("#print-result", e);
+      fail("#print-result", e);
+      toast(e.message || "Druck fehlgeschlagen", "err");
+    } finally {
+      btn.disabled = false;
     }
   }
 
   /* --------------------------------------------------------------- devices --- */
 
-  async function loadDevices() {
+  function renderDevices() {
     const body = $("#dev-table tbody");
-    if (state.active === "relay") {
-      const agents = await relay().agentList();
-      body.innerHTML = agents.length
-        ? agents
-            .map((a) => {
-              const seen = a.last_seen_at ? Date.parse(a.last_seen_at) : 0;
-              const online = seen && Date.now() - seen < relay().AGENT_STALE_MS;
-              return `<tr><td><strong>${esc(a.name)}</strong></td><td class="mono">${esc(a.hostname || "—")}</td><td>${esc(a.version || "—")}</td><td><span class="pill ${online ? "ok" : "err"}">${online ? "läuft" : "offline"}</span> ${a.last_seen_at ? new Date(a.last_seen_at).toLocaleString("de-DE") : ""}</td></tr>`;
-            })
-            .join("")
-        : `<tr><td colspan="4">Kein Agent freigeschaltet. Siehe „Verbindung“.</td></tr>`;
-      $("#dev-ssid").innerHTML = '<i class="fa-solid fa-cloud"></i> über Warteschlange';
-      $("#dev-head").textContent = "Agenten";
+    if (!body) return;
+    if (state.active === "bridge") {
+      const rows = state.devices.length
+        ? state.devices.map((d) => {
+            const can = [d.canScan ? "Scan" : null, d.canColor ? "Farbe" : null, d.canDuplex ? "Duplex" : null].filter(Boolean).join(" · ") || "—";
+            return `<tr><td><strong>${esc(d.model || d.instance)}</strong></td><td>${esc(d.host || "—")}</td><td>${esc(can)}</td><td>Lokaler Helfer</td></tr>`;
+          })
+        : [];
+      body.innerHTML = rows.length ? rows.join("") : `<tr><td colspan="4" class="empty">Kein Gerät im Netz gemeldet.</td></tr>`;
       return;
     }
-    $("#dev-head").textContent = "AirPrint im Netz";
-    body.innerHTML = `<tr><td colspan="4"><i class="fa-solid fa-circle-notch spin"></i> Netz wird durchsucht</td></tr>`;
-    try {
-      const { devices } = await call("/api/discover", { timeout: 40000 });
-      state.devices = devices;
-      body.innerHTML = devices.length
-        ? devices
-            .map((d) => {
-              const can = [d.canScan ? "Scan" : null, d.canColor ? "Farbe" : null, d.canDuplex ? "Duplex" : null].filter(Boolean).join(" · ") || "—";
-              return `<tr><td><strong>${esc(d.model || d.instance)}</strong></td><td class="mono">${esc(d.host || "—")}</td><td>${esc(can)}</td><td>${d.adminUrl ? `<code class="mono">${esc(d.adminUrl)}</code>` : "—"}</td></tr>`;
-            })
-            .join("")
-        : `<tr><td colspan="4">Kein AirPrint-Gerät geantwortet. Gerät wecken oder Diagnose starten.</td></tr>`;
-      fillScanHosts();
-    } catch (e) {
-      body.innerHTML = "";
-      showError("#banner", e);
-    }
+    const rows = state.printers.map((p) => {
+      const agent = state.agents.find((a) => a.id === p.agent_id);
+      const can = [p.can_scan ? "Scan" : null, p.reachable === true ? "im Netz" : null].filter(Boolean).join(" · ") || "—";
+      return `<tr><td><strong>${esc(p.display_name || p.queue)}</strong></td><td>${esc(p.scan_host || "—")}</td><td>${esc(can)}</td><td>${esc(agent?.name || "—")}${agent && !agentOnline(agent) ? " (offline)" : ""}</td></tr>`;
+    });
+    body.innerHTML = rows.length ? rows.join("") : `<tr><td colspan="4" class="empty">Kein Gerät gemeldet.</td></tr>`;
   }
 
   /* --------------------------------------------------------------- scanner --- */
 
-  const COLOR_LABELS = { RGB24: "Farbe", Grayscale8: "Graustufen", BlackAndWhite1: "Schwarzweiß" };
-  const INTENT_LABELS = { Document: "Dokument", Photo: "Foto", TextAndGraphic: "Text & Grafik", Preview: "Vorschau" };
-  const FORMAT_LABELS = { "application/pdf": "PDF", "image/jpeg": "JPEG", "image/png": "PNG" };
-  const PAPER = { "": "Ganze Fläche", a4: { label: "A4", w: 2480, h: 3508 }, letter: { label: "Letter", w: 2550, h: 3300 }, a5: { label: "A5", w: 1748, h: 2480 } };
+  const COLOR = { RGB24: "Farbe", Grayscale8: "Graustufen", BlackAndWhite1: "Schwarzweiß" };
+  const INTENT = { Document: "Dokument", Photo: "Foto", TextAndGraphic: "Text und Grafik", Preview: "Vorschau" };
+  const FORMAT = { "application/pdf": "PDF", "image/jpeg": "JPEG", "image/png": "PNG" };
+  const PAPER = { full: { label: "Ganze Fläche" }, a4: { label: "A4", w: 2480, h: 3508 }, a5: { label: "A5", w: 1748, h: 2480 }, letter: { label: "Letter", w: 2550, h: 3300 } };
 
   function scanners() {
-    if (state.active === "relay") return state.printers.filter((p) => p.can_scan && p.scan_host).map((p) => ({ id: p.id, label: p.display_name || p.queue, host: p.scan_host, caps: p.scan_caps, online: p.agentOnline }));
-    return state.devices.filter((d) => d.canScan && d.host).map((d) => ({ id: d.host, label: d.model || d.instance, host: d.host, caps: null, online: true }));
+    if (state.active === "relay") {
+      return state.printers.filter((p) => p.can_scan && p.scan_host).map((p) => ({ id: p.id, label: p.display_name || p.queue, host: p.scan_host, caps: p.scan_caps, reachable: p.reachable }));
+    }
+    return state.devices.filter((d) => d.canScan && d.host).map((d) => ({ id: d.host, label: d.model || d.instance, host: d.host, caps: null, reachable: true }));
   }
 
-  function fillScanHosts() {
-    const sel = $("#scan-host");
+  function fillScanners() {
     const list = scanners();
-    const prev = sel.value;
-    sel.innerHTML = list.map((s) => `<option value="${esc(s.id)}">${esc(s.label)} — ${esc(s.host)}${s.online ? "" : " (Agent offline)"}</option>`).join("");
+    makeSelect("sel-scanner", {
+      options: list.map((s) => ({ value: s.id, label: s.label })),
+      placeholder: "Kein Scanner gemeldet",
+      onChange: loadCaps,
+    });
+    makeSelect("sel-duplex", { options: [{ value: "0", label: "Nein" }, { value: "1", label: "Ja" }], value: "0", disabled: true, onChange: renderScanOptions });
     if (!list.length) {
-      sel.innerHTML = `<option value="">Kein Scanner gemeldet</option>`;
-      msg("#scan-result", "err", "Es ist kein Gerät mit Scan-Funktion gemeldet.", state.active === "bridge" ? "Unter „Geräte“ das Netz durchsuchen. Bleibt es leer: Diagnose starten." : "Der Agent im Büro muss laufen; er meldet die Scan-Fähigkeiten mit.");
+      note("#scan-result", "err", "Kein Gerät mit Scan-Funktion gemeldet.", state.active === "bridge" ? "Unter Status das Netz prüfen." : "Der Agent meldet die Scan-Fähigkeiten beim Start.");
+      setPill("#scan-state", "bad", "scan-line", "Kein Scanner");
       return;
     }
-    if (prev && list.some((s) => String(s.id) === prev)) sel.value = prev;
+    clear("#scan-result");
     loadCaps();
   }
 
-  function currentScanner() {
-    const id = $("#scan-host").value;
-    return scanners().find((s) => String(s.id) === id) || null;
-  }
+  const currentScanner = () => scanners().find((s) => String(s.id) === String(selValue("sel-scanner"))) || null;
 
   function sourceCaps() {
     if (!state.caps) return null;
-    const src = $("#scan-source").value;
-    if (src === "feeder") return ($("#scan-duplex").value === "1" && state.caps.sources.feederDuplex) || state.caps.sources.feeder;
+    const src = selValue("sel-source");
+    if (src === "feeder") return (selValue("sel-duplex") === "1" && state.caps.sources.feederDuplex) || state.caps.sources.feeder;
     return state.caps.sources.platen;
   }
 
   async function loadCaps() {
     const s = currentScanner();
     if (!s) return;
-    clear("#scan-result");
+    setPill("#scan-state", s.reachable === true ? "ok" : "warn", "scan-line", s.label, s.reachable === true ? "Im Netz gemeldet" : "Gerät schläft oder meldet sich nicht");
     try {
       state.caps = s.caps || (state.active === "bridge" ? await call("/api/scanner/capabilities?host=" + encodeURIComponent(s.host), { timeout: 30000 }) : null);
-      if (!state.caps) {
-        msg("#scan-result", "err", "Für dieses Gerät sind keine Scan-Fähigkeiten gemeldet.", "Der Agent liest sie beim Start. Agent neu starten, danach Liste neu laden.");
-        return;
-      }
-      const src = state.caps.sources;
-      $("#scan-source").innerHTML = [src.platen ? '<option value="platen">Flachbett</option>' : "", src.feeder ? '<option value="feeder">Einzug</option>' : ""].join("");
-      $("#scan-duplex").disabled = !state.caps.supportsDuplex;
-      if (!state.caps.supportsDuplex) $("#scan-duplex").value = "0";
-      renderScanOptions();
-      refreshScannerStatus();
     } catch (e) {
-      showError("#scan-result", e);
+      return fail("#scan-result", e);
     }
+    if (!state.caps) {
+      note("#scan-result", "err", "Für dieses Gerät sind keine Scan-Fähigkeiten gemeldet.", "Der Agent liest sie beim Start. Agent neu starten, dann neu laden.");
+      return;
+    }
+    const src = state.caps.sources;
+    makeSelect("sel-source", {
+      options: [src.platen ? { value: "platen", label: "Flachbett" } : null, src.feeder ? { value: "feeder", label: "Einzug" } : null].filter(Boolean),
+      onChange: () => {
+        renderScanOptions();
+      },
+    });
+    makeSelect("sel-duplex", { options: [{ value: "0", label: "Nein" }, { value: "1", label: "Ja" }], value: "0", disabled: !state.caps.supportsDuplex, onChange: renderScanOptions });
+    renderScanOptions();
   }
 
   function renderScanOptions() {
     const caps = sourceCaps();
     if (!caps) return;
-    const fill = (sel, values, labels, fallback) => {
-      const el = $(sel);
-      const prev = el.value;
-      const list = values && values.length ? values : fallback;
-      el.innerHTML = list.map((v) => `<option value="${esc(v)}">${esc((labels && labels[v]) || v)}</option>`).join("");
-      if (prev && list.includes(prev)) el.value = prev;
-    };
-    fill("#scan-color", caps.colorModes, COLOR_LABELS, ["RGB24"]);
-    fill("#scan-res", (caps.resolutions || []).map(String), null, ["300"]);
-    fill("#scan-format", (caps.formats || []).filter((f) => f !== "application/octet-stream"), FORMAT_LABELS, ["application/pdf"]);
-    fill("#scan-intent", caps.intents, INTENT_LABELS, ["Document"]);
-    $("#scan-size").innerHTML = Object.entries(PAPER).map(([k, v]) => `<option value="${k}">${esc(typeof v === "string" ? v : v.label)}</option>`).join("");
-    $$("#scan-res option").forEach((o) => (o.textContent = o.value + " dpi"));
-  }
-
-  async function refreshScannerStatus() {
-    const s = currentScanner();
-    const pill = $("#scan-adf");
-    if (!s) return;
-    if (state.active === "relay") {
-      pill.className = "pill " + (s.online ? "ok" : "err");
-      pill.innerHTML = `<i class="fa-solid fa-${s.online ? "circle-check" : "circle-xmark"}"></i> Agent ${s.online ? "läuft" : "offline"}`;
-      return;
-    }
-    pill.className = "pill";
-    pill.innerHTML = '<i class="fa-solid fa-circle-notch spin"></i> Status';
-    try {
-      const st = await call("/api/scanner/status?host=" + encodeURIComponent(s.host), { timeout: 15000 });
-      pill.className = "pill " + (st.state === "Idle" ? (st.adfLoaded ? "ok" : "") : "warn");
-      pill.innerHTML = `<i class="fa-solid fa-${st.state === "Idle" ? "circle-check" : "hourglass-half"}"></i> ${esc(st.state || "?")}${st.adfState ? " · Einzug " + (st.adfLoaded ? "belegt" : "leer") : ""}`;
-    } catch (e) {
-      pill.className = "pill err";
-      pill.innerHTML = '<i class="fa-solid fa-circle-xmark"></i> kein Status';
-      showError("#scan-result", e);
-    }
+    const fill = (id, values, labels, fallback, suffix) =>
+      makeSelect(id, {
+        options: (values && values.length ? values : fallback).map((v) => ({ value: v, label: (labels && labels[v]) || v + (suffix || "") })),
+        value: selValue(id),
+      });
+    fill("sel-color", caps.colorModes, COLOR, ["RGB24"]);
+    fill("sel-res", (caps.resolutions || []).map(String), null, ["300"], " dpi");
+    fill("sel-format", (caps.formats || []).filter((f) => f !== "application/octet-stream"), FORMAT, ["application/pdf"]);
+    fill("sel-intent", caps.intents, INTENT, ["Document"]);
+    makeSelect("sel-size", { options: Object.entries(PAPER).map(([k, v]) => ({ value: k, label: v.label })), value: selValue("sel-size") || "full" });
   }
 
   function scanSettings(scanner) {
-    const size = PAPER[$("#scan-size").value];
+    const size = PAPER[selValue("sel-size") || "full"];
     const s = {
       host: scanner.host,
-      source: $("#scan-source").value,
-      colorMode: $("#scan-color").value,
-      resolution: Number($("#scan-res").value),
-      format: $("#scan-format").value,
-      intent: $("#scan-intent").value,
-      duplex: $("#scan-duplex").value === "1",
+      source: selValue("sel-source") || "platen",
+      colorMode: selValue("sel-color") || "RGB24",
+      resolution: Number(selValue("sel-res") || 300),
+      format: selValue("sel-format") || "application/pdf",
+      intent: selValue("sel-intent") || "Document",
+      duplex: selValue("sel-duplex") === "1",
     };
     // eSCL zählt Scanbereiche in 1/300 Zoll, unabhängig von der Auflösung.
-    if (size && typeof size !== "string") {
+    if (size?.w) {
       s.width = size.w;
       s.height = size.h;
     }
@@ -477,65 +531,70 @@
 
   async function startScan() {
     const scanner = currentScanner();
-    if (!scanner) return msg("#scan-result", "err", "Kein Scanner gewählt.", "Unter „Geräte“ nachsehen, welche Geräte gemeldet sind.");
-    $("#scan-go").disabled = true;
+    if (!scanner) return note("#scan-result", "err", "Kein Scanner gewählt.");
+    const btn = $("#scan-go");
+    btn.disabled = true;
     $("#scan-pages").innerHTML = "";
     $("#scan-actions").classList.add("hidden");
     state.scanPages = [];
-    msg("#scan-result", "info", "Scan läuft…", "Seiten erscheinen, sobald sie übertragen sind.");
+    note("#scan-result", "info", "Scan läuft…", "Seiten erscheinen, sobald sie übertragen sind.");
     const settings = scanSettings(scanner);
     try {
       if (state.active === "bridge") {
-        state.scan = await call("/api/scan", { method: "POST", body: JSON.stringify(settings), headers: { "Content-Type": "application/json" }, timeout: 60000 });
+        state.scanJob = await call("/api/scan", { method: "POST", body: JSON.stringify(settings), headers: { "Content-Type": "application/json" }, timeout: 60000 });
         pollScan();
         return;
       }
       const jobId = await relay().submitScan(scanner.id, settings);
-      const done = await relay().waitFor(jobId, (st) => renderRelayPages(st), { timeoutMs: 420000 });
-      $("#scan-go").disabled = false;
-      if (done.status === "error") return showError("#scan-result", done.error || { message: "Der Scan ist fehlgeschlagen." });
-      renderRelayPages(done);
-      const secs = Math.round((Date.parse(done.finished_at) - Date.parse(done.created_at)) / 1000);
-      msg("#scan-result", "ok", `${done.pages.length} ${done.pages.length === 1 ? "Seite" : "Seiten"} gescannt.`, `${secs} s · ${settings.resolution} dpi · ${COLOR_LABELS[settings.colorMode] || settings.colorMode}`);
+      const done = await relay().waitFor(jobId, (st) => showRelayPages(st), { timeoutMs: 420000 });
+      btn.disabled = false;
+      if (done.status === "error") throw done.error || { message: "Der Scan ist fehlgeschlagen." };
+      showRelayPages(done);
+      const secs = Math.max(1, Math.round((Date.parse(done.finished_at) - Date.parse(done.created_at)) / 1000));
+      note("#scan-result", "ok", `${done.pages.length} ${done.pages.length === 1 ? "Seite" : "Seiten"} gescannt.`, `${secs} s · ${settings.resolution} dpi · ${COLOR[settings.colorMode] || settings.colorMode}`);
       $("#scan-actions").classList.toggle("hidden", !done.pages.length);
+      toast(`${done.pages.length} ${done.pages.length === 1 ? "Seite" : "Seiten"} gescannt`, "ok");
     } catch (e) {
-      $("#scan-go").disabled = false;
-      showError("#scan-result", e);
+      btn.disabled = false;
+      fail("#scan-result", e);
+      toast(e.message || "Scan fehlgeschlagen", "err");
     }
   }
 
   async function pollScan() {
-    if (!state.scan) return;
+    if (!state.scanJob) return;
     clearTimeout(state.pollTimer);
     try {
-      const job = await call("/api/scan/" + encodeURIComponent(state.scan.id), { timeout: 30000 });
-      renderBridgePages(job);
+      const job = await call("/api/scan/" + encodeURIComponent(state.scanJob.id), { timeout: 30000 });
+      showBridgePages(job);
       if (job.state === "running") {
         state.pollTimer = setTimeout(pollScan, 1500);
         return;
       }
       $("#scan-go").disabled = false;
-      if (job.state === "error") return showError("#scan-result", job.error || { message: "Der Scan brach ab." });
-      msg("#scan-result", "ok", `${job.pages.length} ${job.pages.length === 1 ? "Seite" : "Seiten"} gescannt.`, `${Math.round(job.elapsedMs / 1000)} s · ${job.settings.resolution} dpi · ${COLOR_LABELS[job.settings.colorMode] || job.settings.colorMode}`);
+      if (job.state === "error") {
+        fail("#scan-result", job.error || { message: "Der Scan brach ab." });
+        return;
+      }
+      note("#scan-result", "ok", `${job.pages.length} ${job.pages.length === 1 ? "Seite" : "Seiten"} gescannt.`, `${Math.round(job.elapsedMs / 1000)} s · ${job.settings.resolution} dpi · ${COLOR[job.settings.colorMode] || job.settings.colorMode}`);
       $("#scan-actions").classList.toggle("hidden", !job.pages.length);
+      toast(`${job.pages.length} ${job.pages.length === 1 ? "Seite" : "Seiten"} gescannt`, "ok");
     } catch (e) {
       $("#scan-go").disabled = false;
-      showError("#scan-result", e);
+      fail("#scan-result", e);
     }
   }
 
   /* ----------------------------------------------------------------- pages --- */
 
-  function ext(mime) {
-    return mime.includes("pdf") ? "pdf" : mime.includes("png") ? "png" : "jpg";
-  }
+  const extOf = (mime) => (mime.includes("pdf") ? "pdf" : mime.includes("png") ? "png" : "jpg");
 
-  function renderBridgePages(job) {
+  function showBridgePages(job) {
     state.scanPages = job.pages.map((p, i) => ({ idx: i, mime: p.mime, bytes: p.bytes, url: state.url + p.url + "?token=" + encodeURIComponent(state.token) }));
     paintPages();
   }
 
-  function renderRelayPages(job) {
+  function showRelayPages(job) {
     state.scanPages = job.pages.map((p) => ({ idx: p.idx, mime: p.mime, bytes: p.bytes, page: p }));
     paintPages();
   }
@@ -544,29 +603,20 @@
     const wrap = $("#scan-pages");
     wrap.innerHTML = state.scanPages
       .map((p, i) => {
-        const thumb = p.url && p.mime.startsWith("image/") ? `<img src="${esc(p.url)}" alt="Seite ${i + 1}">` : `<i class="fa-solid fa-${p.mime.includes("pdf") ? "file-pdf" : "image"}"></i>`;
+        const thumb = p.url && p.mime.startsWith("image/") ? `<img src="${esc(p.url)}" alt="Seite ${i + 1}">` : `<i class="ri-${p.mime.includes("pdf") ? "file-pdf-line" : "image-line"}"></i>`;
         return `<div class="page">
-          <div class="thumb" data-idx="${i}">${thumb}</div>
-          <div class="meta"><span>Seite ${i + 1} · ${bytes(p.bytes)}</span><a href="#" data-dl="${i}">Laden</a></div>
+          <div class="page-thumb" data-idx="${i}" role="button" tabindex="0">${thumb}</div>
+          <div class="page-meta"><span>Seite ${i + 1} · ${kb(p.bytes)}</span><button class="btn-ghost" data-dl="${i}" title="Herunterladen"><i class="ri-download-2-line"></i></button></div>
         </div>`;
       })
       .join("");
-    $$("#scan-pages .thumb").forEach((el) => el.addEventListener("click", () => openPreview(Number(el.dataset.idx))));
-    $$("#scan-pages [data-dl]").forEach((el) =>
-      el.addEventListener("click", (ev) => {
-        ev.preventDefault();
-        savePage(Number(el.dataset.dl));
-      })
-    );
-  }
-
-  /** Blob-URL für Vorschau und Download; im Relay kommen die Bytes per RPC. */
-  async function pageObjectUrl(p) {
-    if (p.url) return p.url;
-    const blob = await relay().pageBlob(p.page);
-    p.blobUrl = p.blobUrl || URL.createObjectURL(blob);
-    p.blob = blob;
-    return p.blobUrl;
+    $$("#scan-pages .page-thumb").forEach((el) => {
+      el.addEventListener("click", () => openPreview(Number(el.dataset.idx)));
+      el.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") openPreview(Number(el.dataset.idx));
+      });
+    });
+    $$("#scan-pages [data-dl]").forEach((el) => el.addEventListener("click", () => savePage(Number(el.dataset.dl))));
   }
 
   async function pageBlob(p) {
@@ -574,16 +624,16 @@
     if (p.url) {
       const res = await call(p.url.replace(state.url, "").split("?")[0], { raw: true });
       p.blob = await res.blob();
-      return p.blob;
+    } else {
+      p.blob = await relay().pageBlob(p.page);
     }
-    await pageObjectUrl(p);
     return p.blob;
   }
 
   async function savePage(i) {
     const p = state.scanPages[i];
     if (!p) return;
-    const name = `scan-${String(i + 1).padStart(2, "0")}.${ext(p.mime)}`;
+    const name = `scan-${String(i + 1).padStart(2, "0")}.${extOf(p.mime)}`;
     try {
       const blob = await pageBlob(p);
       if (window.RootsUserBridge?.downloadBlob) {
@@ -599,7 +649,7 @@
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 2000);
     } catch (e) {
-      showError("#scan-result", e);
+      toast(e.message || "Download fehlgeschlagen", "err");
     }
   }
 
@@ -607,31 +657,29 @@
     const p = state.scanPages[i];
     if (!p) return;
     $("#modal-title").textContent = `Seite ${i + 1}`;
-    $("#modal-content").innerHTML = '<i class="fa-solid fa-circle-notch spin" style="font-size:1.6rem;color:#94a3b8"></i>';
+    $("#modal-body").innerHTML = `<i class="ri-loader-4-line spin" style="font-size:1.8rem;color:var(--status-border)"></i>`;
     $("#modal").classList.remove("hidden");
+    $("#modal-dl").onclick = () => savePage(i);
+    $("#modal-print").onclick = () => printPage(i);
     try {
-      const url = await pageObjectUrl(p);
-      $("#modal-content").innerHTML = p.mime.startsWith("image/") ? `<img src="${esc(url)}" alt="Seite ${i + 1}">` : `<iframe src="${esc(url)}" style="height:80vh" title="Seite ${i + 1}"></iframe>`;
-      const dl = $("#modal-dl");
-      dl.onclick = (ev) => {
-        ev.preventDefault();
-        savePage(i);
-      };
+      const blob = await pageBlob(p);
+      p.blobUrl = p.blobUrl || URL.createObjectURL(blob);
+      $("#modal-body").innerHTML = p.mime.startsWith("image/") ? `<img src="${esc(p.blobUrl)}" alt="Seite ${i + 1}">` : `<iframe src="${esc(p.blobUrl)}" title="Seite ${i + 1}"></iframe>`;
     } catch (e) {
-      $("#modal-content").innerHTML = "";
-      showError("#scan-result", e);
       $("#modal").classList.add("hidden");
+      toast(e.message || "Vorschau fehlgeschlagen", "err");
     }
   }
 
-  async function printScan() {
-    const p = state.scanPages[0];
+  async function printPage(i) {
+    const p = state.scanPages[i];
     if (!p) return;
-    msg("#scan-result", "info", "Scan wird an den Drucker übergeben…");
     try {
-      await doPrint(await pageBlob(p), "scan." + ext(p.mime));
+      await doPrint(await pageBlob(p), "scan." + extOf(p.mime));
+      switchView("print");
+      $("#modal").classList.add("hidden");
     } catch (e) {
-      showError("#scan-result", e);
+      toast(e.message || "Druck fehlgeschlagen", "err");
     }
   }
 
@@ -643,66 +691,98 @@
     try {
       if (state.active === "bridge") {
         const { jobs } = await call("/api/printer/jobs?queue=" + encodeURIComponent(currentPrinter()?.queue || ""));
-        body.innerHTML = jobs.length ? jobs.map((j) => `<tr><td class="mono">${esc(j.id)}</td><td>${esc(j.user || "—")}</td><td>${j.size ? bytes(j.size) : "—"}</td><td>im Drucker</td></tr>`).join("") : `<tr><td colspan="4">Keine offenen Aufträge.</td></tr>`;
+        body.innerHTML = jobs.length ? jobs.map((j) => `<tr><td>${esc(j.id)}</td><td>${esc(j.user || "—")}</td><td>${j.size ? kb(j.size) : "—"}</td><td>im Drucker</td></tr>`).join("") : `<tr><td colspan="4" class="empty">Keine offenen Aufträge.</td></tr>`;
         return;
       }
-      const data = await relay().jobs();
+      const jobs = await relay().jobs();
       const label = { queued: "wartet", claimed: "übernommen", running: "läuft", done: "fertig", error: "Fehler" };
-      const cls = { queued: "warn", claimed: "warn", running: "warn", done: "ok", error: "err" };
-      body.innerHTML = (data || []).length
-        ? data
-            .map((j) => `<tr><td class="mono">${esc(j.kind)} · ${esc(j.id.slice(0, 8))}</td><td>${esc(j.requested_email || "—")}</td><td>${esc(j.filename || (j.settings?.resolution ? j.settings.resolution + " dpi" : "—"))}</td><td><span class="pill ${cls[j.status] || ""}">${esc(label[j.status] || j.status)}</span> ${new Date(j.created_at).toLocaleString("de-DE")}${j.error?.message ? `<div style="color:var(--err);font-size:.78rem">${esc(j.error.message)}</div>` : ""}</td></tr>`)
+      const kind = { queued: "warn", claimed: "warn", running: "busy", done: "ok", error: "bad" };
+      body.innerHTML = jobs.length
+        ? jobs
+            .map(
+              (j) => `<tr>
+        <td><strong>${j.kind === "scan" ? "Scan" : "Druck"}</strong></td>
+        <td>${esc(j.requested_email || "—")}</td>
+        <td>${esc(j.filename || (j.settings?.resolution ? j.settings.resolution + " dpi" : "—"))}</td>
+        <td><span class="pill ${kind[j.status] || ""}" style="height:28px"><i class="ri-${j.status === "done" ? "checkbox-circle-line" : j.status === "error" ? "error-warning-line" : "time-line"}"></i><span class="pill-text">${esc(label[j.status] || j.status)} · ${esc(when(j.created_at))}</span></span>${j.error?.message ? `<div style="color:var(--danger);font-size:.78rem;margin-top:.25rem">${esc(j.error.message)}</div>` : ""}</td></tr>`
+            )
             .join("")
-        : `<tr><td colspan="4">Keine Aufträge in den letzten drei Tagen.</td></tr>`;
+        : `<tr><td colspan="4" class="empty">Keine Aufträge in den letzten drei Tagen.</td></tr>`;
     } catch (e) {
-      body.innerHTML = "";
-      showError("#banner", e.hint ? e : { message: e.message || "Aufträge konnten nicht geladen werden." });
+      body.innerHTML = `<tr><td colspan="4" class="empty">${esc(e.message || "Aufträge konnten nicht geladen werden.")}</td></tr>`;
     }
   }
 
-  /* -------------------------------------------------------------- diagnose --- */
+  /* ---------------------------------------------------------------- status --- */
 
-  async function runDiagnose() {
-    const out = $("#diag-out");
-    if (state.active !== "bridge") {
-      const agents = await relay().agentList();
-      const online = agents.filter((a) => a.last_seen_at && Date.now() - Date.parse(a.last_seen_at) < relay().AGENT_STALE_MS);
-      const checks = [
-        { ok: true, label: "Warteschlange", detail: "Supabase erreichbar", hint: null },
-        { ok: agents.length > 0, label: "Agent freigeschaltet", detail: `${agents.length} eingetragen`, hint: agents.length ? null : "Agent im Büro starten und den angezeigten Hash unter „Verbindung“ eintragen." },
-        { ok: online.length > 0, label: "Agent läuft", detail: online.length ? online.map((a) => a.name).join(", ") : "keine Meldung in den letzten fünf Minuten", hint: online.length ? null : "Auf dem Büro-Rechner: `node bridge/roots-print-agent.js`." },
-        { ok: state.printers.length > 0, label: "Drucker gemeldet", detail: state.printers.map((p) => p.display_name || p.queue).join(", ") || "keine", hint: state.printers.length ? null : "Der Agent meldet Drucker beim Start; Agent neu starten." },
-      ];
-      out.innerHTML = renderChecks(checks);
-      out.insertAdjacentHTML(
-        "beforeend",
-        '<div class="msg info" style="margin-top:14px"><i class="fa-solid fa-circle-info"></i><div><strong>Die Netzprüfung am Gerät läuft nur über den lokalen Helfer.</strong><span class="hint">Die Warteschlange sieht den Drucker nicht selbst — sie kennt nur, was der Agent meldet.</span></div></div>'
-      );
-      return;
-    }
-    out.innerHTML = '<i class="fa-solid fa-circle-notch spin"></i> Prüfung läuft';
-    try {
-      const host = currentScanner()?.host || "";
-      const d = await call("/api/diagnose?host=" + encodeURIComponent(host), { timeout: 60000 });
-      $("#dev-ssid").innerHTML = `<i class="fa-solid fa-wifi"></i> ${esc(d.ssid || "kein WLAN")}`;
-      out.innerHTML = renderChecks(d.checks);
-    } catch (e) {
-      out.innerHTML = "";
-      showError("#diag-out", e);
-    }
-  }
-
-  function renderChecks(checks) {
-    return checks
+  function renderChecks(list) {
+    $("#checks").innerHTML = list
       .map(
         (c) => `<div class="check">
-          <div class="ico ${c.ok ? "ok" : "bad"}"><i class="fa-solid fa-${c.ok ? "circle-check" : "circle-xmark"}"></i></div>
-          <div class="body"><strong>${esc(c.label)}</strong>
-            <div class="detail mono">${esc(c.detail)}</div>
-            ${c.hint ? `<div class="fix"><i class="fa-solid fa-wrench"></i> ${esc(c.hint)}</div>` : ""}
-          </div></div>`
+      <div class="check-ico ${c.ok === true ? "ok" : c.ok === false ? "bad" : "unknown"}"><i class="ri-${c.ok === true ? "checkbox-circle-line" : c.ok === false ? "close-circle-line" : "question-line"}"></i></div>
+      <div class="check-body"><strong>${esc(c.label)}</strong>
+        <div class="check-detail">${esc(c.detail)}</div>
+        ${c.hint ? `<div class="check-fix"><i class="ri-tools-line"></i><span>${esc(c.hint)}</span></div>` : ""}
+      </div></div>`
       )
       .join("");
+  }
+
+  async function loadStatus() {
+    if (state.active === "relay") {
+      state.agents = await relay().agentList();
+      state.printers = await relay().printers();
+      renderPills();
+      renderDevices();
+      const live = state.agents.filter(agentOnline);
+      const printer = state.printers[0];
+      const ssid = state.agents.find((a) => a.ssid)?.ssid;
+      renderChecks([
+        { ok: true, label: "Warteschlange", detail: "Supabase erreichbar" },
+        { ok: state.agents.length > 0, label: "Agent freigeschaltet", detail: `${state.agents.length} eingetragen`, hint: state.agents.length ? null : "Agent starten und den angezeigten Hash unten eintragen." },
+        { ok: live.length > 0, label: "Agent läuft", detail: live.length ? live.map((a) => `${a.name} · ${when(a.last_seen_at)}`).join(", ") : "keine Meldung in den letzten fünf Minuten", hint: live.length ? null : "Auf dem Büro-Rechner: node bridge/roots-print-agent.js" },
+        { ok: ssid === "FRITZ!Box 4040 JI" ? true : ssid ? false : null, label: "Netz des Agenten", detail: ssid || "nicht gemeldet", hint: ssid && ssid !== "FRITZ!Box 4040 JI" ? "Der Agent hängt in einem anderen Netz als der Drucker." : null },
+        { ok: printer ? printer.reachable === true : false, label: "Drucker im Netz", detail: printer ? `${printer.display_name || printer.queue}${printer.reachable === true ? " · gemeldet " + when(printer.checked_at) : " · keine Meldung"}` : "kein Drucker gemeldet", hint: printer && printer.reachable !== true ? "Das Gerät schläft. Es wacht beim ersten Auftrag von selbst auf." : null },
+        { ok: printer ? !!printer.can_scan : false, label: "Scan-Funktion", detail: printer?.can_scan ? printer.scan_host : "nicht gemeldet", hint: printer?.can_scan ? null : "Der Agent liest die Fähigkeiten beim Start, solange das Gerät wach ist." },
+      ]);
+      return;
+    }
+    try {
+      const d = await call("/api/diagnose?passive=1", { timeout: 60000 });
+      state.ssid = d.ssid;
+      state.devices = (await call("/api/discover", { timeout: 40000 })).devices;
+      renderPills();
+      renderDevices();
+      renderChecks(d.checks.map((c) => ({ ok: c.ok, label: c.label, detail: c.detail, hint: c.hint })));
+    } catch (e) {
+      fail("#checks", e);
+    }
+  }
+
+  async function deepCheck() {
+    const btn = $("#deep-check");
+    btn.disabled = true;
+    note("#deep-result", "info", "Gerät wird angesprochen…");
+    try {
+      if (state.active === "bridge") {
+        const host = currentScanner()?.host || state.devices[0]?.host || "";
+        const d = await call("/api/diagnose?host=" + encodeURIComponent(host), { timeout: 60000 });
+        renderChecks(d.checks);
+        note("#deep-result", "ok", "Prüfung abgeschlossen.");
+      } else {
+        const scanner = currentScanner();
+        if (!scanner) throw { message: "Kein Scanner gemeldet." };
+        const jobId = await relay().submitScan(scanner.id, { host: scanner.host, source: "platen", colorMode: "Grayscale8", resolution: 300, format: "image/jpeg", intent: "Preview", width: 300, height: 300 });
+        const done = await relay().waitFor(jobId, null, { timeoutMs: 180000 });
+        if (done.status === "error") throw done.error || { message: "Das Gerät hat nicht geantwortet." };
+        note("#deep-result", "ok", "Das Gerät hat geantwortet.", "Drucker und Scanner sind über den Agenten erreichbar.");
+        loadStatus();
+      }
+    } catch (e) {
+      fail("#deep-result", e);
+    } finally {
+      btn.disabled = false;
+    }
   }
 
   /* ----------------------------------------------------------------- auth --- */
@@ -710,26 +790,19 @@
   let sb = null;
   const IN_IFRAME = window.parent !== window;
   const EMBEDDED = IN_IFRAME || new URLSearchParams(location.search).has("authBroker");
-  // Sandboxed iframes bekommen vom Intranet keine Sitzung. Dann laufen alle
-  // Anfragen ueber den Broker, genau wie bei Notes-Tool, Team-Kalender und
-  // SOP-Tool. Die Brücke ist die verlässlichere Quelle: sie kennt ihren eigenen
-  // Zustand, auch wenn das Flag zu spät gesetzt wurde.
   const TOKENLESS = window.RootsUserBridge?.TOKENLESS_EMBED === true || window.ROOTS_TOKENLESS_EMBED === true;
 
-  function domainAllowed(email) {
-    const dom = String(email || "").split("@")[1] || "";
-    return CFG.ALLOWED_EMAIL_DOMAINS.includes(dom.toLowerCase());
-  }
+  const domainAllowed = (email) => CFG.ALLOWED_EMAIL_DOMAINS.includes(String(email || "").split("@")[1]?.toLowerCase());
 
   async function bootAuth() {
     if (TOKENLESS) {
       $("#login-form").classList.add("hidden");
-      msg("#gate-msg", "info", "Anmeldung wird vom Intranet übernommen…");
+      note("#gate-msg", "info", "Anmeldung wird vom Intranet übernommen…");
       relay().useBroker();
       window.addEventListener("roots-broker-context-ready", (e) => applyBrokerContext(e.detail));
       window.addEventListener("roots-auth-signed-out", () => {
         booted = false;
-        msg("#gate-msg", "err", "Die Sitzung des Intranets ist beendet.", "Im Intranet neu anmelden, danach das Tool erneut öffnen.");
+        note("#gate-msg", "err", "Die Sitzung des Intranets ist beendet.", "Im Intranet neu anmelden.");
         showGate(true);
       });
       void requestBrokerContext();
@@ -737,59 +810,20 @@
     }
 
     sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY);
-    // roots-user-bridge.js greift den Client hier ab und setzt die Sitzung, die
-    // das Intranet übergibt — wie in den anderen ROOTS-Tools.
     window.__rootsSupabaseClient = sb;
     relay().use(sb);
-
     if (EMBEDDED) {
       $("#login-form").classList.add("hidden");
-      msg("#gate-msg", "info", "Anmeldung wird vom Intranet übernommen…");
+      note("#gate-msg", "info", "Anmeldung wird vom Intranet übernommen…");
       window.addEventListener("roots-auth-ready", (e) => applySession(e.detail?.session || null));
-      window.addEventListener("roots-auth-signed-out", () => {
-        booted = false;
-        msg("#gate-msg", "err", "Die Sitzung des Intranets ist beendet.", "Im Intranet neu anmelden, danach das Tool erneut öffnen.");
-        showGate(true);
-      });
       setTimeout(() => window.RootsUserBridge?.syncAuthFromParentStorage?.(), 300);
-      setTimeout(() => {
-        if (!$("#app").classList.contains("hidden")) return;
-        msg("#gate-msg", "err", "Das Intranet hat keine Sitzung übergeben.", "Im Intranet abmelden und neu anmelden. Bleibt es dabei, ist <code>roots-user-bridge.js</code> nicht geladen.");
-      }, 8000);
     }
-
     const { data } = await sb.auth.getSession();
     applySession(data.session);
     sb.auth.onAuthStateChange((_e, session) => applySession(session));
   }
 
-  function applySession(session) {
-    const email = session?.user?.email || "";
-    if (!session) return showGate(EMBEDDED);
-    if (!domainAllowed(email)) {
-      msg("#gate-msg", "err", "Dieses Konto gehört nicht zu ROOTS.", "Drucken und Scannen sind auf Adressen der ROOTS-Domänen beschränkt.");
-      if (!EMBEDDED) sb.auth.signOut();
-      return showGate(true);
-    }
-    $("#gate").classList.add("hidden");
-    $("#app").classList.remove("hidden");
-    $("#user-pill").innerHTML = `<i class="fa-solid fa-user"></i> ${esc(email)}`;
-    if (window.RootsUser && window.RootsUser._loadAndMount) {
-      try {
-        window.RootsUser._loadAndMount(sb);
-      } catch (e) {
-        /* die Bridge hängt sich selbst ein, sobald sie bereit ist */
-      }
-    }
-    void loadProfile();
-    bootApp();
-  }
-
-  /**
-   * Den Kontext selbst anfragen, statt auf das Ereignis der Brücke zu warten:
-   * genau wie das Notes-Tool. Das Intranet lehnt die Anfrage ab, solange es die
-   * Identität des Frames noch nicht gebunden hat — deshalb mehrere Versuche.
-   */
+  /** Wie im Notes-Tool: den Kontext selbst anfragen statt auf ein Ereignis zu warten. */
   async function requestBrokerContext(attempt = 0) {
     if (!$("#app").classList.contains("hidden")) return;
     const request = window.RootsUserBridge?.request;
@@ -798,50 +832,69 @@
         const context = await request("user-context", {}, 20000);
         if (context?.user?.id) return applyBrokerContext(context);
       } catch (e) {
-        if (attempt === 0) msg("#gate-msg", "info", "Anmeldung wird vom Intranet übernommen…");
+        /* Intranet ist noch nicht bereit */
       }
     }
     if (attempt >= 6) {
-      msg("#gate-msg", "err", "Das Intranet hat keine Anmeldung übergeben.", request ? "Im Intranet neu laden und die Kachel erneut öffnen." : "<code>roots-user-bridge.js</code> ist nicht geladen.");
+      note("#gate-msg", "err", "Das Intranet hat keine Anmeldung übergeben.", request ? "Im Intranet neu laden und die Kachel erneut öffnen." : "<code>roots-user-bridge.js</code> ist nicht geladen.");
       return;
     }
     setTimeout(() => void requestBrokerContext(attempt + 1), 1500);
   }
 
-  /** Tokenloser Weg: Identität und Rolle kommen aus der Broker-Antwort. */
   function applyBrokerContext(context) {
     const email = context?.user?.email || context?.profile?.email || "";
-    if (!context?.user?.id) {
-      msg("#gate-msg", "err", "Das Intranet hat keine Anmeldung übergeben.", "Im Intranet neu anmelden.");
-      return showGate(true);
-    }
+    if (!context?.user?.id) return;
     if (!domainAllowed(email)) {
-      msg("#gate-msg", "err", "Dieses Konto gehört nicht zu ROOTS.", "Drucken und Scannen sind auf Adressen der ROOTS-Domänen beschränkt.");
+      note("#gate-msg", "err", "Dieses Konto gehört nicht zu ROOTS.");
       return showGate(true);
     }
     state.profile = context.profile || null;
-    // Die Brücke und ihre Kopfzeilen-Widgets lesen RootsUser — wie in den
-    // anderen tokenlosen Tools hier selbst setzen.
     if (window.RootsUser) {
       window.RootsUser._uid = context.user.id;
       window.RootsUser._p = context.profile || { id: context.user.id, email, app_role: "reader" };
     }
-    clear("#gate-msg");
-    $("#gate").classList.add("hidden");
-    $("#app").classList.remove("hidden");
-    $("#user-pill").innerHTML = `<i class="fa-solid fa-user"></i> ${esc(email)}`;
-    $("#agent-admin").classList.toggle("hidden", context.profile?.app_role !== "admin");
-    bootApp();
+    unlock(email, context.profile?.app_role === "admin");
+  }
+
+  function applySession(session) {
+    const email = session?.user?.email || "";
+    if (!session) return showGate(EMBEDDED);
+    if (!domainAllowed(email)) {
+      note("#gate-msg", "err", "Dieses Konto gehört nicht zu ROOTS.");
+      if (!EMBEDDED) sb.auth.signOut();
+      return showGate(true);
+    }
+    if (window.RootsUser?._loadAndMount) {
+      try {
+        window.RootsUser._loadAndMount(sb);
+      } catch (e) {
+        /* die Brücke hängt sich selbst ein */
+      }
+    }
+    unlock(email, false);
+    void loadProfile();
   }
 
   async function loadProfile() {
     try {
-      const { data } = await sb.from("profiles").select("id, app_role").eq("id", (await sb.auth.getUser()).data.user.id).maybeSingle();
+      const uid = (await sb.auth.getUser()).data.user?.id;
+      if (!uid) return;
+      const { data } = await sb.from("profiles").select("id, app_role").eq("id", uid).maybeSingle();
       state.profile = data || null;
       $("#agent-admin").classList.toggle("hidden", data?.app_role !== "admin");
     } catch (e) {
-      /* ohne Profil bleibt der Agent-Bereich verborgen */
+      /* ohne Profil bleibt der Bereich verborgen */
     }
+  }
+
+  function unlock(email, isAdmin) {
+    clear("#gate-msg");
+    $("#gate").classList.add("hidden");
+    $("#app").classList.remove("hidden");
+    setPill("#pill-user", "", "user-line", email);
+    $("#agent-admin").classList.toggle("hidden", !isAdmin);
+    bootApp();
   }
 
   function showGate(keepMsg) {
@@ -853,124 +906,139 @@
   /* ------------------------------------------------------------------ app --- */
 
   let booted = false;
+
   async function bootApp() {
     if (booted) return;
     booted = true;
     $("#conn-url").value = state.url;
     $("#conn-token").value = state.token;
-    $("#conn-mode").value = state.mode;
-    if (TOKENLESS) {
-      $("#conn-mode").value = "relay";
-      $("#conn-mode").disabled = true;
-      $("#conn-local").classList.add("hidden");
-    }
+    makeSelect("sel-mode", {
+      options: [
+        { value: "auto", label: "Automatisch" },
+        { value: "relay", label: "Nur Warteschlange" },
+        { value: "bridge", label: "Nur lokaler Helfer" },
+      ],
+      value: TOKENLESS ? "relay" : state.mode,
+      disabled: TOKENLESS,
+      onChange: async (v) => {
+        state.mode = v;
+        lsSet(LS.mode, v);
+        await reboot();
+        toast(state.active === "bridge" ? "Läuft über den lokalen Helfer" : "Läuft über die Warteschlange", "ok");
+      },
+    });
+    if (TOKENLESS) $("#conn-local").classList.add("hidden");
+
     await pickMode();
-    renderModePill();
+    if (state.active === "bridge") {
+      state.devices = await call("/api/discover", { timeout: 40000 }).then((d) => d.devices).catch(() => []);
+      state.ssid = await call("/api/diagnose?passive=1", { timeout: 30000 }).then((d) => d.ssid).catch(() => null);
+    }
     await loadPrinters();
-    loadDevices();
     loadJobs();
+    loadStatus();
   }
 
-  async function rebootApp() {
+  async function reboot() {
     booted = false;
     clear("#banner");
     await bootApp();
   }
 
   function switchView(view) {
-    $$("nav button").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
+    $$(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
     $$("section[data-panel]").forEach((s) => s.classList.toggle("hidden", s.dataset.panel !== view));
     if (view === "jobs") loadJobs();
-    if (view === "devices") loadDevices();
-    if (view === "scan" && !state.caps) fillScanHosts();
+    if (view === "status") loadStatus();
+    if (view === "scan" && !state.caps) fillScanners();
+  }
+
+  function pickFile(file) {
+    if (!file) return;
+    state.file = file;
+    $("#filedrop-name").textContent = file.name;
+    $("#filedrop-meta").textContent = kb(file.size);
   }
 
   function wire() {
     $("#login-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       const email = $("#gate-email").value.trim();
-      const password = $("#gate-pw").value;
-      if (!domainAllowed(email)) return msg("#gate-msg", "err", "Diese Adresse ist nicht freigegeben.", "Nur ROOTS-Adressen können drucken und scannen.");
-      msg("#gate-msg", "info", "Anmeldung läuft…");
-      const { error } = await sb.auth.signInWithPassword({ email, password });
-      if (error) msg("#gate-msg", "err", "Anmeldung fehlgeschlagen.", "E-Mail und Passwort sind dieselben wie im ROOTS Intranet.");
+      if (!domainAllowed(email)) return note("#gate-msg", "err", "Diese Adresse ist nicht freigegeben.");
+      note("#gate-msg", "info", "Anmeldung läuft…");
+      const { error } = await sb.auth.signInWithPassword({ email, password: $("#gate-pw").value });
+      if (error) note("#gate-msg", "err", "Anmeldung fehlgeschlagen.", "E-Mail und Passwort sind dieselben wie im ROOTS Intranet.");
       else clear("#gate-msg");
     });
 
-    $("#logout").addEventListener("click", () => sb.auth.signOut().then(() => location.reload()));
-    $$("nav button").forEach((b) => b.addEventListener("click", () => switchView(b.dataset.view)));
+    $("#logout").addEventListener("click", () => (sb ? sb.auth.signOut().then(() => location.reload()) : location.reload()));
+    $$(".nav-item").forEach((b) => b.addEventListener("click", () => switchView(b.dataset.view)));
 
-    $("#print-queue").addEventListener("change", () => {
-      loadOptions();
-      loadJobs();
+    const drop = $("#filedrop");
+    drop.addEventListener("click", () => $("#print-file").click());
+    drop.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      drop.classList.add("over");
     });
-    $("#print-reload").addEventListener("click", loadPrinters);
+    drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+    drop.addEventListener("drop", (e) => {
+      e.preventDefault();
+      drop.classList.remove("over");
+      pickFile(e.dataTransfer.files[0]);
+    });
+    $("#print-file").addEventListener("change", (e) => pickFile(e.target.files[0]));
+
+    $("#print-reload").addEventListener("click", () => loadPrinters());
     $("#print-go").addEventListener("click", () => {
-      const f = $("#print-file").files[0];
-      if (!f) return msg("#print-result", "err", "Es ist keine Datei gewählt.", "PDF, JPEG, PNG oder TXT wählen.");
-      doPrint(f, f.name);
+      if (!state.file) return note("#print-result", "err", "Es ist keine Datei gewählt.");
+      doPrint(state.file, state.file.name);
     });
 
-    $("#scan-host").addEventListener("change", loadCaps);
-    $("#scan-source").addEventListener("change", () => {
-      renderScanOptions();
-      refreshScannerStatus();
-    });
-    $("#scan-duplex").addEventListener("change", renderScanOptions);
     $("#scan-go").addEventListener("click", startScan);
-    $("#scan-status").addEventListener("click", refreshScannerStatus);
-    $("#scan-print").addEventListener("click", printScan);
+    $("#scan-status").addEventListener("click", () => (state.active === "bridge" ? refreshBridgeScannerStatus() : loadStatus()));
+    $("#scan-print").addEventListener("click", () => printPage(0));
     $("#scan-dl-all").addEventListener("click", async () => {
       for (let i = 0; i < state.scanPages.length; i++) await savePage(i);
     });
 
-    $("#dev-refresh").addEventListener("click", loadDevices);
     $("#jobs-refresh").addEventListener("click", loadJobs);
-    $("#diag-run").addEventListener("click", runDiagnose);
-
-    $("#conn-mode").addEventListener("change", async () => {
-      state.mode = $("#conn-mode").value;
-      lsSet(LS_MODE, state.mode);
-      await rebootApp();
-      msg("#conn-out", "ok", state.active === "bridge" ? "Läuft über den lokalen Helfer." : "Läuft über die Warteschlange.");
-    });
+    $("#status-refresh").addEventListener("click", loadStatus);
+    $("#deep-check").addEventListener("click", deepCheck);
 
     $("#conn-save").addEventListener("click", async () => {
       state.url = $("#conn-url").value.trim().replace(/\/$/, "");
       state.token = $("#conn-token").value.trim();
-      lsSet(LS_URL, state.url);
-      lsSet(LS_TOKEN, state.token);
-      const ok = await detectBridge(true);
-      if (ok) {
-        msg("#conn-out", "ok", `Verbunden mit ${state.url}.`);
+      lsSet(LS.url, state.url);
+      lsSet(LS.token, state.token);
+      if (await detectBridge(true)) {
+        note("#conn-out", "ok", `Verbunden mit ${state.url}.`);
         state.mode = "auto";
-        lsSet(LS_MODE, "auto");
-        await rebootApp();
+        lsSet(LS.mode, "auto");
+        await reboot();
       } else if (state.bridgeIssue === "token") {
-        msg("#conn-out", "err", "Der Helfer läuft, akzeptiert dieses Token aber nicht.", "Aktuelles Token anzeigen: <code>cat ~/.roots-print/token</code>");
+        note("#conn-out", "err", "Der Helfer läuft, akzeptiert dieses Token aber nicht.", "Aktuelles Token: <code>cat ~/.roots-print/token</code>");
       } else {
-        const kind = location.protocol === "https:" ? "blocked" : "offline";
-        msg("#conn-out", "err", `Unter ${esc(state.url)} antwortet kein Helfer.`, NETWORK_HINTS[kind].hint);
+        note("#conn-out", "err", `Unter ${esc(state.url)} antwortet kein Helfer.`, NET_HINT[location.protocol === "https:" ? "blocked" : "offline"].hint);
       }
     });
     $("#conn-forget").addEventListener("click", () => {
-      lsDel(LS_TOKEN);
+      lsDel(LS.token);
       state.token = "";
       $("#conn-token").value = "";
-      msg("#conn-out", "info", "Token gelöscht.");
+      toast("Token gelöscht");
     });
 
     $("#agent-add").addEventListener("click", async () => {
-      const name = $("#agent-name").value.trim();
       const hash = $("#agent-hash").value.trim();
-      if (!/^[0-9a-f]{64}$/i.test(hash)) return msg("#agent-out", "err", "Der Hash muss 64 Hex-Zeichen haben.", "Auf dem Büro-Rechner anzeigen: <code>node bridge/roots-print-agent.js --hash</code>");
+      if (!/^[0-9a-f]{64}$/i.test(hash)) return note("#agent-out", "err", "Der Hash muss 64 Hex-Zeichen haben.", "Auf dem Büro-Rechner: <code>node bridge/roots-print-agent.js --hash</code>");
       try {
-        await relay().registerAgent(name, hash);
-        msg("#agent-out", "ok", "Agent freigeschaltet.", "Er meldet sich innerhalb einer Minute mit seinen Druckern.");
+        await relay().registerAgent($("#agent-name").value.trim(), hash);
+        note("#agent-out", "ok", "Agent freigeschaltet.", "Er meldet sich innerhalb einer Minute mit seinen Druckern.");
         $("#agent-hash").value = "";
-        loadDevices();
+        toast("Agent freigeschaltet", "ok");
+        loadStatus();
       } catch (e) {
-        showError("#agent-out", e);
+        fail("#agent-out", e);
       }
     });
 
@@ -978,13 +1046,23 @@
     $("#modal").addEventListener("click", (e) => {
       if (e.target.id === "modal") $("#modal").classList.add("hidden");
     });
-    document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") $("#modal").classList.add("hidden");
-    });
+  }
+
+  async function refreshBridgeScannerStatus() {
+    const s = currentScanner();
+    if (!s) return;
+    setPill("#scan-state", "busy", "loader-4-line spin", "Status wird geholt");
+    try {
+      const st = await call("/api/scanner/status?host=" + encodeURIComponent(s.host), { timeout: 15000 });
+      setPill("#scan-state", st.state === "Idle" ? "ok" : "warn", "scan-line", `${st.state}${st.adfState ? " · Einzug " + (st.adfLoaded ? "belegt" : "leer") : ""}`);
+    } catch (e) {
+      setPill("#scan-state", "bad", "scan-line", "kein Status");
+      fail("#scan-result", e);
+    }
   }
 
   document.addEventListener("DOMContentLoaded", () => {
     wire();
-    bootAuth().catch(() => msg("#gate-msg", "err", "Supabase ist nicht erreichbar.", "Netzverbindung prüfen und Seite neu laden."));
+    bootAuth().catch(() => note("#gate-msg", "err", "Supabase ist nicht erreichbar.", "Netzverbindung prüfen und Seite neu laden."));
   });
 })();

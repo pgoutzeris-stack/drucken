@@ -202,7 +202,9 @@ const server = http.createServer(async (req, res) => {
       if (p === "/api/discover" && req.method === "GET") return sendJson(req, res, 200, { devices: await resolveIppHosts() });
       if (p === "/api/printer/options" && req.method === "GET") return sendJson(req, res, 200, await printerOptions(url.searchParams.get("queue")));
       if (p === "/api/printer/jobs" && req.method === "GET") return sendJson(req, res, 200, await jobsFor(url.searchParams.get("queue")));
-      if (p === "/api/diagnose" && req.method === "GET") return sendJson(req, res, 200, await diagnose(url.searchParams.get("host")));
+      if (p === "/api/diagnose" && req.method === "GET") {
+        return sendJson(req, res, 200, await diagnose(url.searchParams.get("host"), { passive: url.searchParams.get("passive") === "1" }));
+      }
       if (p === "/api/scanner/capabilities" && req.method === "GET") return sendJson(req, res, 200, await scannerCapabilities(url.searchParams.get("host")));
       if (p === "/api/scanner/status" && req.method === "GET") return sendJson(req, res, 200, await scannerStatus(url.searchParams.get("host")));
 
