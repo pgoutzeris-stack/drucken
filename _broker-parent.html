@@ -3,8 +3,8 @@
 </head><body>
 <h3>Broker-Test für die Print-Kachel</h3>
 <div id="log"></div>
-<iframe id="f" sandbox="allow-scripts allow-forms allow-downloads allow-modals allow-popups allow-popups-to-escape-sandbox"
-  referrerpolicy="no-referrer"></iframe>
+<label><input type="checkbox" id="sb" checked> sandbox</label>
+<iframe id="f" referrerpolicy="no-referrer"></iframe>
 <script>
 // Bildet die Nachrichten von ROOTS_Intranet nach, damit der tokenlose Weg auf der
 // echten Origin geprüft werden kann. Nur zum Testen, kein Teil des Tools.
@@ -21,7 +21,24 @@ frame.addEventListener("load", () => {
     session: { access_token: "a", refresh_token: "r", user: USER } }, "*");
   setTimeout(sync, 300); setTimeout(sync, 1200);
 });
+if (new URLSearchParams(location.search).get("nosandbox") !== "1") {
+  frame.setAttribute("sandbox", "allow-scripts allow-forms allow-downloads allow-modals allow-popups allow-popups-to-escape-sandbox");
+} else {
+  document.getElementById("sb").checked = false;
+}
 frame.src = "https://pgoutzeris-stack.github.io/drucken/?authBroker=v1&cb=" + Date.now().toString(36);
+
+// Diagnose: Zustand im Frame, sofern lesbar (nur ohne sandbox).
+window.probe = () => {
+  try {
+    const d = frame.contentDocument, w = frame.contentWindow;
+    return { tokenless: w.ROOTS_TOKENLESS_EMBED === true, bridge: !!w.RootsUserBridge,
+      tokenlessBridge: w.RootsUserBridge && w.RootsUserBridge.TOKENLESS_EMBED,
+      appVisible: !d.getElementById("app").classList.contains("hidden"),
+      gate: d.getElementById("gate-msg").textContent.trim(),
+      user: d.getElementById("user-pill").textContent.trim() };
+  } catch (e) { return { error: String(e) }; }
+};
 
 window.addEventListener("message", (e) => {
   const d = e.data || {};
