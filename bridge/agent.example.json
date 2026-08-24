@@ -1,0 +1,11 @@
+{
+  "name": "Cloud-Agent",
+  "printers": [
+    {
+      "queue": "Canon_MF732C",
+      "host": "192.168.178.21",
+      "display_name": "Canon MF732C/734C/735C",
+      "is_default": true
+    }
+  ]
+}

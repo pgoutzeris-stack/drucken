@@ -54,16 +54,17 @@ function loadToken() {
 const TOKEN = loadToken();
 const TOKEN_HASH = crypto.createHash("sha256").update(TOKEN).digest("hex");
 
-function agentName() {
+function config() {
   try {
-    if (fs.existsSync(CONFIG_FILE)) {
-      const cfg = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8"));
-      if (cfg.name) return String(cfg.name);
-    }
+    if (fs.existsSync(CONFIG_FILE)) return JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8"));
   } catch (e) {
-    /* Standardname genügt */
+    log(`agent.json ist kein gültiges JSON — Datei wird ignoriert: ${e.message}`);
   }
-  return os.hostname();
+  return {};
+}
+
+function agentName() {
+  return String(config().name || os.hostname());
 }
 
 /* ------------------------------------------------------------------ rpc --- */
@@ -103,7 +104,62 @@ async function rpc(fn, args, { timeout = 120000 } = {}) {
 
 /* ------------------------------------------------------------- inventory --- */
 
+/**
+ * Läuft der Agent nicht im gleichen Netz wie der Drucker — etwa auf einer
+ * Cloud-Maschine, die per WireGuard in das Büronetz eingewählt ist —, dann
+ * findet mDNS nichts. Dann zählt allein, was in agent.json steht: feste
+ * Adressen statt Suche.
+ */
+async function staticInventory(entries) {
+  const { printers } = await dev.listPrinters().catch(() => ({ printers: [] }));
+  const known = new Set(printers.map((p) => p.name));
+  const out = [];
+  for (const entry of entries) {
+    const queue = String(entry.queue || "").trim();
+    const host = String(entry.host || "").trim();
+    if (!queue || !host) {
+      log("Eintrag in agent.json ohne queue oder host — übersprungen.");
+      continue;
+    }
+    if (!known.has(queue)) {
+      if (entry.autoCreateQueue === false) {
+        log(`Warteschlange ${queue} fehlt und autoCreateQueue ist aus — übersprungen.`);
+        continue;
+      }
+      const uri = entry.deviceUri || `ipp://${host}/ipp/print`;
+      const res = await dev.run("lpadmin", ["-p", queue, "-E", "-v", uri, "-m", "everywhere"], { timeout: 30000 });
+      if (res.code !== 0) {
+        log(`Warteschlange ${queue} konnte nicht angelegt werden: ${(res.stderr || res.stdout).trim()}`);
+        continue;
+      }
+      log(`Warteschlange ${queue} angelegt (${uri}).`);
+    }
+    let options = [];
+    try {
+      options = (await dev.printerOptions(queue)).options;
+    } catch (e) {
+      /* Ohne Optionen bleibt der Drucker nutzbar */
+    }
+    const scanCaps = entry.canScan === false ? null : await dev.scannerCapabilities(host).catch(() => null);
+    const live = printers.find((p) => p.name === queue);
+    out.push({
+      queue,
+      display_name: entry.display_name || scanCaps?.makeAndModel || queue,
+      state: live?.state || "unknown",
+      state_text: live?.stateText || "über feste Adresse",
+      is_default: !!entry.is_default,
+      options,
+      scan_host: scanCaps ? host : null,
+      can_scan: !!scanCaps,
+      scan_caps: scanCaps,
+    });
+  }
+  return out;
+}
+
 async function inventory() {
+  const cfg = config();
+  if (Array.isArray(cfg.printers) && cfg.printers.length) return staticInventory(cfg.printers);
   const { printers } = await dev.listPrinters();
   const devices = await dev.resolveIppHosts().catch(() => []);
   const out = [];

@@ -44,6 +44,49 @@ dieselben Dateien aus.
 Das Tool nimmt automatisch den Helfer, wenn er antwortet, sonst die
 Warteschlange. Unter „Verbindung“ lässt sich der Weg festnageln.
 
+## Ganz ohne Rechner im Büro
+
+Ein Browser oder eine Edge Function erreicht den Drucker nie direkt: er hängt in
+einem privaten Netz hinter NAT, und aus der Cloud lässt sich keine Verbindung
+dorthin aufbauen. Etwas im Netz des Druckers muss die Verbindung nach außen
+herstellen. Dieses „Etwas" muss aber kein Mac sein — und es muss nicht einmal im
+Büro stehen:
+
+**Agent auf einer Cloud-Maschine, Tunnel über den Router.** Die FRITZ!Box kann ab
+FRITZ!OS 7.56 WireGuard. Eine kleine Cloud-Maschine wählt sich als
+WireGuard-Gegenstelle ein und erreicht den Drucker dann wie ein Gerät im Büro. Im
+Büro läuft dafür nichts außer Router und Drucker.
+
+1. Drucker im Router auf eine feste IP festlegen (hier `192.168.178.21`).
+2. FRITZ!Box: Internet › Freigaben › VPN (WireGuard) › Verbindung für die
+   Cloud-Maschine anlegen, Konfigurationsdatei herunterladen.
+3. Auf der Cloud-Maschine WireGuard starten, dann prüfen:
+   `curl http://192.168.178.21/eSCL/ScannerStatus`
+4. CUPS installieren und `~/.roots-print/agent.json` anlegen — siehe
+   `bridge/agent.example.json`. Mit `printers` überspringt der Agent die
+   mDNS-Suche (die über den Tunnel nicht funktioniert) und legt die
+   CUPS-Warteschlange selbst an (`ipp://<IP>/ipp/print`).
+5. `node bridge/roots-print-agent.js` starten und den Hash im Tool freischalten.
+
+Was das kostet: eine kleine Maschine (ab etwa 4 € im Monat) und ein Tunnel, der
+Zugang in das Büronetz gibt — wird die Maschine übernommen, hängt sie im
+Firmennetz. Deshalb den Tunnel auf die Drucker-IP begrenzen und die Maschine
+sonst dicht halten.
+
+**Alternative ohne Cloud-Maschine und ohne Tunnel:** ein kleines Dauergerät im
+Büro, etwa ein Raspberry Pi Zero 2 W (einmalig etwa 25 €) oder ein
+ausgedientes Telefon. Gleicher Agent, keine monatlichen Kosten, mDNS funktioniert.
+
+**Ganz ohne Agent, aber nur für Scans:** Der Drucker kann Scans selbst
+verschicken (Scan to E-Mail, FTP, geteilter Ordner). Ein Eingangs-Webhook für
+E-Mail plus eine Edge Function könnte sie in `print.job_pages` ablegen. Gestartet
+wird der Scan dann am Gerät, nicht im Browser.
+
+**Ganz ohne Agent, auch für Druck:** Das gibt es nur mit Canons eigener Cloud
+(uniFLOW Online; der MF732Cdw ist über den Universal Login Manager kompatibel).
+Dort holt sich das Gerät die Aufträge selbst. Kostet Abo über einen
+Canon-Partner, und die Aufträge laufen über Canons Cloud statt über dieses Tool.
+
 ## Agent im Büro einrichten
 
 ```bash
