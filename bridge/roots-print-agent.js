@@ -6,7 +6,7 @@
  * Supabase ab: Drucker melden, Aufträge holen, drucken (CUPS) und scannen
  * (AirScan/eSCL), Ergebnisseiten zurückschreiben.
  *
- * Damit braucht niemand mehr eigene Software — der Browser spricht nur mit
+ * Damit braucht niemand mehr eigene Software - der Browser spricht nur mit
  * Supabase, und dieser Prozess ist der einzige, der den Drucker erreicht.
  *
  * Anmeldung: Der Agent erzeugt beim ersten Start ein Token in
@@ -31,7 +31,7 @@ const VERSION = "1.0.0";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Die mDNS-Suche antwortet nicht immer im ersten Versuch. Was einmal gefunden
-// wurde, bleibt gemerkt — und Scan-Fähigkeiten werden nur einmal geholt, weil
+// wurde, bleibt gemerkt - und Scan-Fähigkeiten werden nur einmal geholt, weil
 // der eSCL-Aufruf das Gerät aufweckt.
 const knownHosts = new Map();
 const capsCache = new Map();
@@ -67,7 +67,7 @@ function config() {
   try {
     if (fs.existsSync(CONFIG_FILE)) return JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8"));
   } catch (e) {
-    log(`agent.json ist kein gültiges JSON — Datei wird ignoriert: ${e.message}`);
+    log(`agent.json ist kein gültiges JSON - Datei wird ignoriert: ${e.message}`);
   }
   return {};
 }
@@ -127,7 +127,7 @@ async function currentSsid() {
 
 /**
  * Anwesenheit rein passiv feststellen. Ein Aufruf an IPP oder eSCL weckt das
- * Gerät aus dem Ruhezustand — es fährt hoch und macht Geräusche. Deshalb zählt
+ * Gerät aus dem Ruhezustand - es fährt hoch und macht Geräusche. Deshalb zählt
  * nur, was ohne Zutun ohnehin im Netz steht: die Bonjour-Ankündigung (die bei
  * schlafenden AirPrint-Geräten der Sleep-Proxy beantwortet) und ein bereits
  * vorhandener ARP-Eintrag.
@@ -137,12 +137,12 @@ async function isPresent(host, seenViaMdns) {
   if (!host) return null;
   const arp = await dev.run("arp", ["-n", host], { timeout: 5000 });
   if (arp.code === 0 && /(([0-9a-f]{1,2}:){5}[0-9a-f]{1,2})/i.test(arp.stdout)) return true;
-  return null; // keine Aussage — nicht als "offline" behaupten
+  return null; // keine Aussage - nicht als "offline" behaupten
 }
 
 /**
- * Läuft der Agent nicht im gleichen Netz wie der Drucker — etwa auf einer
- * Cloud-Maschine, die per WireGuard in das Büronetz eingewählt ist —, dann
+ * Läuft der Agent nicht im gleichen Netz wie der Drucker - etwa auf einer
+ * Cloud-Maschine, die per WireGuard in das Büronetz eingewählt ist -, dann
  * findet mDNS nichts. Dann zählt allein, was in agent.json steht: feste
  * Adressen statt Suche.
  */
@@ -161,7 +161,7 @@ async function staticInventory(entries) {
     const queue = String(entry.queue || "").trim();
     const host = String(entry.host || "").trim();
     if (!queue || !host) {
-      log("Eintrag in agent.json ohne queue oder host — übersprungen.");
+      log("Eintrag in agent.json ohne queue oder host - übersprungen.");
       continue;
     }
     // Ohne CUPS-Warteschlange druckt der Agent direkt per IPP. Das ist auf einer
@@ -366,7 +366,7 @@ async function tick() {
 }
 
 async function main() {
-  log(`ROOTS Print Agent ${VERSION} – ${agentName()} (${os.hostname()})`);
+  log(`ROOTS Print Agent ${VERSION} - ${agentName()} (${os.hostname()})`);
   try {
     await hello();
   } catch (e) {

@@ -3,7 +3,7 @@
  *
  * Der Browser legt Aufträge in der Warteschlange ab; der Agent im Büro arbeitet
  * sie ab und schreibt Ergebnisseiten zurück. Damit funktioniert das Tool auch
- * dort, wo der Browser 127.0.0.1 nicht erreichen darf — Safari, die Mac-App,
+ * dort, wo der Browser 127.0.0.1 nicht erreichen darf - Safari, die Mac-App,
  * das Handy, von zuhause.
  */
 window.RootsPrintRelay = (function () {

@@ -65,7 +65,7 @@ function tokenOk(req) {
 /* ----------------------------------------------------------------- util --- */
 
 
-/** dns-sd never exits on its own — run it for `ms` and keep what it printed. */
+/** dns-sd never exits on its own - run it for `ms` and keep what it printed. */
 
 
 
@@ -195,7 +195,7 @@ const server = http.createServer(async (req, res) => {
 
     if (p.startsWith("/api/")) {
       if (!tokenOk(req)) {
-        return sendJson(req, res, 401, { error: { code: "bad_token", message: "Token fehlt oder passt nicht.", hint: `Token steht in ${TOKEN_FILE} — im Tool unter „Verbindung“ einsetzen.` } });
+        return sendJson(req, res, 401, { error: { code: "bad_token", message: "Token fehlt oder passt nicht.", hint: `Token steht in ${TOKEN_FILE} - im Tool unter „Verbindung“ einsetzen.` } });
       }
 
       if (p === "/api/printers" && req.method === "GET") return sendJson(req, res, 200, await listPrinters());

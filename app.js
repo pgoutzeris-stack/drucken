@@ -1,5 +1,5 @@
 /**
- * ROOTS Print – frontend.
+ * ROOTS Print - frontend.
  *
  * Zwei Wege zum Gerät, gleiche Oberfläche:
  *   relay   Warteschlange in Supabase, abgearbeitet vom Agenten im Büro.
@@ -293,11 +293,11 @@
     }
     if (await detectBridge()) {
       state.active = "bridge";
-      note("#banner", "info", "Kein Agent im Büro gemeldet — es läuft über den lokalen Helfer.", "Aufträge gehen direkt an den Drucker in diesem Netz.");
+      note("#banner", "info", "Kein Agent im Büro gemeldet - es läuft über den lokalen Helfer.", "Aufträge gehen direkt an den Drucker in diesem Netz.");
       return;
     }
     state.active = "relay";
-    note("#banner", "err", "Kein Agent im Büro und kein lokaler Helfer.", state.agents.length ? "Auf dem Büro-Rechner: <code>node bridge/roots-print-agent.js</code>. Aufträge warten bis dahin." : "Es ist kein Agent freigeschaltet — siehe Status › Agent freischalten.");
+    note("#banner", "err", "Kein Agent im Büro und kein lokaler Helfer.", state.agents.length ? "Auf dem Büro-Rechner: <code>node bridge/roots-print-agent.js</code>. Aufträge warten bis dahin." : "Es ist kein Agent freigeschaltet - siehe Status › Agent freischalten.");
   }
 
   /* ------------------------------------------------------------- printers --- */
@@ -416,8 +416,8 @@
     if (state.active === "bridge") {
       const rows = state.devices.length
         ? state.devices.map((d) => {
-            const can = [d.canScan ? "Scan" : null, d.canColor ? "Farbe" : null, d.canDuplex ? "Duplex" : null].filter(Boolean).join(" · ") || "—";
-            return `<tr><td><strong>${esc(d.model || d.instance)}</strong></td><td>${esc(d.host || "—")}</td><td>${esc(can)}</td><td>Lokaler Helfer</td></tr>`;
+            const can = [d.canScan ? "Scan" : null, d.canColor ? "Farbe" : null, d.canDuplex ? "Duplex" : null].filter(Boolean).join(" · ") || "-";
+            return `<tr><td><strong>${esc(d.model || d.instance)}</strong></td><td>${esc(d.host || "-")}</td><td>${esc(can)}</td><td>Lokaler Helfer</td></tr>`;
           })
         : [];
       body.innerHTML = rows.length ? rows.join("") : `<tr><td colspan="4" class="empty">Kein Gerät im Netz gemeldet.</td></tr>`;
@@ -425,8 +425,8 @@
     }
     const rows = state.printers.map((p) => {
       const agent = state.agents.find((a) => a.id === p.agent_id);
-      const can = [p.can_scan ? "Scan" : null, p.reachable === true ? "im Netz" : null].filter(Boolean).join(" · ") || "—";
-      return `<tr><td><strong>${esc(p.display_name || p.queue)}</strong></td><td>${esc(p.scan_host || "—")}</td><td>${esc(can)}</td><td>${esc(agent?.name || "—")}${agent && !agentOnline(agent) ? " (offline)" : ""}</td></tr>`;
+      const can = [p.can_scan ? "Scan" : null, p.reachable === true ? "im Netz" : null].filter(Boolean).join(" · ") || "-";
+      return `<tr><td><strong>${esc(p.display_name || p.queue)}</strong></td><td>${esc(p.scan_host || "-")}</td><td>${esc(can)}</td><td>${esc(agent?.name || "-")}${agent && !agentOnline(agent) ? " (offline)" : ""}</td></tr>`;
     });
     body.innerHTML = rows.length ? rows.join("") : `<tr><td colspan="4" class="empty">Kein Gerät gemeldet.</td></tr>`;
   }
@@ -691,7 +691,7 @@
     try {
       if (state.active === "bridge") {
         const { jobs } = await call("/api/printer/jobs?queue=" + encodeURIComponent(currentPrinter()?.queue || ""));
-        body.innerHTML = jobs.length ? jobs.map((j) => `<tr><td>${esc(j.id)}</td><td>${esc(j.user || "—")}</td><td>${j.size ? kb(j.size) : "—"}</td><td>im Drucker</td></tr>`).join("") : `<tr><td colspan="4" class="empty">Keine offenen Aufträge.</td></tr>`;
+        body.innerHTML = jobs.length ? jobs.map((j) => `<tr><td>${esc(j.id)}</td><td>${esc(j.user || "-")}</td><td>${j.size ? kb(j.size) : "-"}</td><td>im Drucker</td></tr>`).join("") : `<tr><td colspan="4" class="empty">Keine offenen Aufträge.</td></tr>`;
         return;
       }
       const jobs = await relay().jobs();
@@ -702,8 +702,8 @@
             .map(
               (j) => `<tr>
         <td><strong>${j.kind === "scan" ? "Scan" : "Druck"}</strong></td>
-        <td>${esc(j.requested_email || "—")}</td>
-        <td>${esc(j.filename || (j.settings?.resolution ? j.settings.resolution + " dpi" : "—"))}</td>
+        <td>${esc(j.requested_email || "-")}</td>
+        <td>${esc(j.filename || (j.settings?.resolution ? j.settings.resolution + " dpi" : "-"))}</td>
         <td><span class="pill ${kind[j.status] || ""}" style="height:28px"><i class="ri-${j.status === "done" ? "checkbox-circle-line" : j.status === "error" ? "error-warning-line" : "time-line"}"></i><span class="pill-text">${esc(label[j.status] || j.status)} · ${esc(when(j.created_at))}</span></span>${j.error?.message ? `<div style="color:var(--danger);font-size:.78rem;margin-top:.25rem">${esc(j.error.message)}</div>` : ""}</td></tr>`
             )
             .join("")

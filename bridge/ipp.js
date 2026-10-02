@@ -4,7 +4,7 @@
  * Für den Agenten auf einer Cloud-Maschine: dort ist kein CUPS und kein
  * Canon-Treiber vorhanden, und `lpadmin -m everywhere` scheitert an der
  * Attributantwort dieses Geräts. Der Drucker nimmt laut eigener mDNS-Auskunft
- * PDF, JPEG und PWG-Raster direkt an — also sprechen wir IPP selbst.
+ * PDF, JPEG und PWG-Raster direkt an - also sprechen wir IPP selbst.
  */
 
 "use strict";
@@ -128,7 +128,7 @@ const IPP_MEDIA = { A4: "iso_a4_210x297mm", A5: "iso_a5_148x210mm", Letter: "na_
 let requestId = 1;
 
 /**
- * Schickt eine Datei direkt an den Drucker. `mime` muss das Gerät können —
+ * Schickt eine Datei direkt an den Drucker. `mime` muss das Gerät können -
  * application/pdf, image/jpeg und image/pwg-raster melden diese Canon-Geräte.
  */
 async function printJob(host, { data, mime = "application/pdf", jobName = "ROOTS Print", copies = 1, options = {}, user = "roots-print", hold = false }) {
@@ -159,7 +159,7 @@ async function printJob(host, { data, mime = "application/pdf", jobName = "ROOTS
   const res = await send(host, "/ipp/print", request(OP.printJob, requestId++, groups, data));
   if (!res.ok) {
     throw Object.assign(new Error(`Der Drucker lehnte den Auftrag ab (IPP 0x${res.statusCode.toString(16)}${res.statusMessage ? ": " + res.statusMessage : ""}).`), {
-      hint: "Format prüfen — sicher sind PDF und JPEG. Bei 0x400 ff. meldet das Gerät ein Problem im Display.",
+      hint: "Format prüfen - sicher sind PDF und JPEG. Bei 0x400 ff. meldet das Gerät ein Problem im Display.",
     });
   }
   return { jobId: res.jobId, statusCode: res.statusCode };

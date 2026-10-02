@@ -1,5 +1,5 @@
 /**
- * ROOTS Drucken – public browser configuration.
+ * ROOTS Drucken - public browser configuration.
  *
  * The anon key only identifies the Supabase project; access is decided by Auth,
  * RLS and the e-mail domain check below. Never place a service-role key here.
