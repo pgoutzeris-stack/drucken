@@ -48,6 +48,7 @@ window.RootsPrintRelay = (function () {
     if (/Drucker unbekannt|Scanner unbekannt/i.test(raw)) return fail("Dieser Drucker ist nicht mehr gemeldet.", "Liste neu laden. Läuft der Agent im Büro noch?");
     if (/groesser als|größer als/i.test(raw)) return fail("Die Datei ist größer als 25 MB.", "Über den Relay sind 25 MB die Grenze. Größere Dateien direkt am Helfer drucken.");
     if (/Unbekannte Print-Anfrage/i.test(raw)) return fail("Das Intranet läuft noch mit einer älteren Version.", "Intranet-Tab neu laden (Cmd+Shift+R), danach Drucken erneut öffnen.");
+    if (/Kein Zugriff auf Druckereinstellungen/i.test(raw)) return fail("Dieses Konto darf die Druckereinstellungen nicht ändern.");
     if (/Kein Zugriff auf Etiketten/i.test(raw)) return fail("Dieses Konto hat keinen Zugriff auf Etiketten.");
     if (/Nur Admins/i.test(raw)) return fail("Nur Admins dürfen Agenten freischalten.");
     if (/Bruecke ist nicht geladen|Brücke ist nicht geladen/i.test(raw)) return fail("Die Intranet-Brücke ist nicht geladen.", "Seite im Intranet neu laden.");
@@ -100,6 +101,11 @@ window.RootsPrintRelay = (function () {
   async function submitScan(printerId, settings) {
     if (brokered) return (await broker({ op: "submit_scan", printerId, settings: settings || {} })).jobId;
     return rpc("print_submit_scan_job", { p_printer_id: printerId, p_settings: settings || {} });
+  }
+
+  async function submitDevice(printerId, settings) {
+    if (brokered) return (await broker({ op: "submit_device", printerId, settings })).jobId;
+    return rpc("print_submit_device_job", { p_printer_id: printerId, p_settings: settings });
   }
 
   async function jobs() {
@@ -188,5 +194,5 @@ window.RootsPrintRelay = (function () {
     });
   }
 
-  return { use, useBroker, printers, agentList, submitPrint, submitScan, jobs, job, waitFor, pageBlob, registerAgent, labelLists, labelAddresses, labelReplace, labelUpdate, labelMarkPrinted, labelStamps, labelStampAdd, labelStampUse, labelStampDelete, labelLogAdd, labelLog, AGENT_STALE_MS };
+  return { use, useBroker, printers, agentList, submitPrint, submitScan, submitDevice, jobs, job, waitFor, pageBlob, registerAgent, labelLists, labelAddresses, labelReplace, labelUpdate, labelMarkPrinted, labelStamps, labelStampAdd, labelStampUse, labelStampDelete, labelLogAdd, labelLog, AGENT_STALE_MS };
 })();

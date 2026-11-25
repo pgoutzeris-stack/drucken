@@ -895,8 +895,10 @@
     try {
       await relay().labelLists();
       $("#nav-labels")?.classList.remove("hidden");
+      $("#nav-device")?.classList.remove("hidden");
     } catch (e) {
       $("#nav-labels")?.classList.add("hidden");
+      $("#nav-device")?.classList.add("hidden");
     }
   }
 

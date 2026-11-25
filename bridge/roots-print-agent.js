@@ -25,8 +25,9 @@ const crypto = require("crypto");
 
 const dev = require("./device-lib.js");
 const ipp = require("./ipp.js");
+const remoteUi = require("./remote-ui.js");
 
-const VERSION = "1.0.0";
+const VERSION = "1.1.0";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -355,7 +356,8 @@ async function tick() {
   if (!job) return;
   log(`Auftrag ${job.kind} ${job.id} von ${job.requested_email || "?"}`);
   try {
-    const result = job.kind === "print" ? await runPrintJob(job) : await runScanJob(job);
+    const result =
+      job.kind === "print" ? await runPrintJob(job) : job.kind === "device" ? await remoteUi.runDeviceAction(job.device, job.settings) : await runScanJob(job);
     await rpc("print_agent_finish_job", { p_token: TOKEN, p_job: job.id, p_status: "done", p_result: result });
     log(`Auftrag ${job.id} fertig`);
   } catch (e) {

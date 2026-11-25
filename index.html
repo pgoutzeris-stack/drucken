@@ -23,7 +23,7 @@
 </script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.8/dist/umd/supabase.js"></script>
 <script src="config.js"></script>
-<script src="relay.js?v=8"></script>
+<script src="relay.js?v=9"></script>
 <script src="https://pgoutzeris-stack.github.io/ROOTS_Intranet/roots-user-bridge.js?v=20260728-identity-guard-v1"></script>
 <style>
 :root{
@@ -329,6 +329,21 @@ button.lbl-status:hover{filter:brightness(.95)}
 .lbl-dialog-body{font-size:.88rem;line-height:1.5}
 .lbl-dialog-body ul{margin:.4rem 0;padding-left:1.1rem}
 .lbl-dialog-foot{display:flex;justify-content:flex-end;gap:.6rem;margin-top:1rem}
+.dev-printer{min-width:220px}
+#dev-panel.busy .card{opacity:.6;transition:opacity .2s}
+.dev-kv{display:flex;gap:.8rem;font-size:.88rem;padding:.35rem 0;border-bottom:1px solid var(--line)}
+.dev-kv span{width:100px;color:var(--muted);flex-shrink:0}
+.dev-err{color:var(--danger)}
+.dev-toners{margin-top:1rem;display:flex;flex-direction:column;gap:.55rem}
+.dev-toner{display:grid;grid-template-columns:80px 1fr 48px;align-items:center;gap:.7rem;font-size:.85rem}
+.dev-toner b{text-align:right;font-variant-numeric:tabular-nums}
+.dev-bar{height:8px;background:var(--surface);border-radius:99px;overflow:hidden}
+.dev-bar div{height:100%;border-radius:99px;transform-origin:left;transform:scaleX(0);transition:transform .7s cubic-bezier(.2,.8,.2,1)}
+.dev-bar div.in{transform:scaleX(1)}
+.dev-tray{padding:.2rem 0 1rem;margin-bottom:1rem;border-bottom:1px solid var(--line);animation:lblRow .3s ease both}
+.dev-tray:last-child{border-bottom:none;margin-bottom:0}
+.dev-tray-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:.7rem}
+.dev-tray h3{margin:0;font-size:.92rem}
 @keyframes lblIn{from{opacity:0;transform:scale(.97)}to{opacity:1;transform:none}}
 @keyframes lblRow{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 @media (max-width:900px){.lbl-layout{grid-template-columns:1fr}.lbl-search{max-width:none}}
@@ -363,6 +378,7 @@ button.lbl-status:hover{filter:brightness(.95)}
     <nav class="nav">
       <button class="nav-item active" data-view="print"><i class="ri-printer-line"></i> Drucken</button>
       <button class="nav-item hidden" id="nav-labels" data-view="labels"><i class="ri-price-tag-3-line"></i> Etiketten</button>
+      <button class="nav-item hidden" id="nav-device" data-view="device"><i class="ri-settings-3-line"></i> Drucker</button>
       <button class="nav-item" data-view="scan"><i class="ri-scan-line"></i> Scannen</button>
       <button class="nav-item" data-view="jobs"><i class="ri-list-check-2"></i> Aufträge</button>
       <button class="nav-item" data-view="status"><i class="ri-pulse-line"></i> Status</button>
@@ -505,6 +521,26 @@ button.lbl-status:hover{filter:brightness(.95)}
       </div>
     </section>
 
+    <section data-panel="device" class="hidden" id="dev-panel">
+      <div class="page-head"><h1>Drucker</h1>
+        <div class="row"><div class="select dev-printer" id="dev-printer"></div>
+        <button class="btn-ghost" id="dev-reload"><i class="ri-refresh-line"></i> Abfragen</button></div>
+      </div>
+      <div id="dev-result" style="margin-bottom:1rem"></div>
+      <div class="lbl-layout">
+        <div class="card">
+          <div class="card-head"><h2>Status</h2></div>
+          <div id="dev-state"></div>
+          <div id="dev-toner" class="dev-toners"></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h2>Papier</h2></div>
+          <div id="dev-trays"></div>
+          <div class="row" style="margin-top:1.1rem"><button class="btn-primary hidden" id="dev-save"><i class="ri-save-3-line"></i> Am Drucker speichern</button></div>
+        </div>
+      </div>
+    </section>
+
     <section data-panel="scan" class="hidden">
       <div class="page-head"><h1>Scannen</h1>
         <span class="pill" id="scan-state"><i class="ri-information-line"></i><span class="pill-text">Gerät</span></span>
@@ -605,7 +641,8 @@ button.lbl-status:hover{filter:brightness(.95)}
   </div>
 </div>
 
-<script src="app.js?v=11"></script>
-<script src="labels.js?v=10"></script>
+<script src="app.js?v=12"></script>
+<script src="labels.js?v=11"></script>
+<script src="device.js?v=1"></script>
 </body>
 </html>

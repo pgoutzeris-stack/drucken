@@ -956,7 +956,7 @@
     await bootApp();
   }
 
-  const VIEW_TITLE = { print: "Drucken", labels: "Etiketten", scan: "Scannen", jobs: "Aufträge", status: "Status" };
+  const VIEW_TITLE = { print: "Drucken", labels: "Etiketten", device: "Drucker", scan: "Scannen", jobs: "Aufträge", status: "Status" };
 
   function switchView(view) {
     $$(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
@@ -966,6 +966,7 @@
     if (view === "status") loadStatus();
     if (view === "scan" && !state.caps) fillScanners();
     if (view === "labels") window.ROOTS_LABELS && window.ROOTS_LABELS.open();
+    if (view === "device") window.ROOTS_DEVICE && window.ROOTS_DEVICE.open();
   }
 
   function pickFile(file) {
