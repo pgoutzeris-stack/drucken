@@ -164,6 +164,17 @@ window.RootsPrintRelay = (function () {
     return rpc("print_label_replace", { p_list: list, p_rows: rows });
   }
 
+  async function labelCall(op, rpcName, args, payload, key) {
+    if (brokered) return (await broker({ op, ...payload }))[key];
+    return rpc(rpcName, args);
+  }
+  const labelUpdate = (id, row) => labelCall("label_update", "print_label_update", { p_id: id, p_row: row }, { id, row }, "row");
+  const labelMarkPrinted = (ids, jobId) => labelCall("label_mark_printed", "print_label_mark_printed", { p_ids: ids, p_job: jobId || null }, { ids, jobId: jobId || null }, "count");
+  const labelStamps = async () => (await labelCall("label_stamps", "print_label_stamps", {}, {}, "stamps")) || [];
+  const labelStampAdd = (s) => labelCall("label_stamp_add", "print_label_stamp_add", { p_image: s.image, p_w: s.w, p_h: s.h, p_info: s.info, p_filename: s.filename }, s, "id");
+  const labelStampUse = (id, address) => labelCall("label_stamp_use", "print_label_stamp_use", { p_id: id, p_address: address || null }, { id, address: address || null }, "ok");
+  const labelStampDelete = (id) => labelCall("label_stamp_delete", "print_label_stamp_delete", { p_id: id }, { id }, "ok");
+
   function blobToBase64(blob) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -173,5 +184,5 @@ window.RootsPrintRelay = (function () {
     });
   }
 
-  return { use, useBroker, printers, agentList, submitPrint, submitScan, jobs, job, waitFor, pageBlob, registerAgent, labelLists, labelAddresses, labelReplace, AGENT_STALE_MS };
+  return { use, useBroker, printers, agentList, submitPrint, submitScan, jobs, job, waitFor, pageBlob, registerAgent, labelLists, labelAddresses, labelReplace, labelUpdate, labelMarkPrinted, labelStamps, labelStampAdd, labelStampUse, labelStampDelete, AGENT_STALE_MS };
 })();

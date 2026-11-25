@@ -382,29 +382,37 @@
   async function doPrint(file, filename, o = {}) {
     const printer = o.printer || currentPrinter();
     const out = o.result || "#print-result";
-    if (!printer) return note(out, "err", "Kein Drucker gewählt.");
+    if (!printer) {
+      note(out, "err", "Kein Drucker gewählt.");
+      return { ok: false };
+    }
     const copies = o.copies || $("#print-copies").value || "1";
     const btn = $(o.button || "#print-go");
     const chosenOptions = () => o.options || chosenPrintOptions();
     btn.disabled = true;
     note(out, "info", "Auftrag wird übergeben…");
+    let jobRef = null;
     try {
       if (state.active === "bridge") {
         const qs = new URLSearchParams({ queue: printer.queue, copies, options: JSON.stringify(chosenOptions()) });
         const res = await call("/api/print?" + qs, { method: "POST", body: file, headers: { "Content-Type": "application/octet-stream", "X-Roots-Filename": filename.replace(/[^\x20-\x7e]/g, "_") } });
+        jobRef = res.jobId || null;
         note(out, "ok", `An ${printer.queue} übergeben.`, res.jobId ? `Auftrag <code>${esc(res.jobId)}</code>` : null);
       } else {
         const jobId = await relay().submitPrint(printer.id, file, filename, { copies: Number(copies), options: chosenOptions() });
         note(out, "info", "In der Warteschlange. Der Agent übernimmt.");
         const done = await relay().waitFor(jobId, null, { timeoutMs: 180000 });
+        jobRef = jobId;
         if (done.status === "error") throw done.error || { message: "Der Auftrag ist fehlgeschlagen." };
         note(out, "ok", `An ${printer.display_name || printer.queue} gedruckt.`, done.result?.jobId ? `Auftrag <code>${esc(done.result.jobId)}</code>` : null);
       }
       toast("Druckauftrag übergeben", "ok");
       loadJobs();
+      return { ok: true, jobId: /^[0-9a-f-]{36}$/i.test(String(jobRef)) ? jobRef : null };
     } catch (e) {
       fail(out, e);
       toast(e.message || "Druck fehlgeschlagen", "err");
+      return { ok: false };
     } finally {
       btn.disabled = false;
     }

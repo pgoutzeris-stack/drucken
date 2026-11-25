@@ -23,7 +23,7 @@
 </script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.8/dist/umd/supabase.js"></script>
 <script src="config.js"></script>
-<script src="relay.js?v=5"></script>
+<script src="relay.js?v=6"></script>
 <script src="https://pgoutzeris-stack.github.io/ROOTS_Intranet/roots-user-bridge.js?v=20260728-identity-guard-v1"></script>
 <style>
 :root{
@@ -225,16 +225,60 @@ tr:last-child td{border-bottom:none}
 .lbl-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:1.1rem;align-items:start}
 .lbl-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 .lbl-preview{position:relative;width:100%;background:#fff;border:1px solid var(--line);border-radius:4px;overflow:hidden}
-.lbl-cell{position:absolute;border:1px dashed #c9ced8;overflow:hidden}
+.lbl-cell{position:absolute;border:1px dashed #c9ced8;overflow:hidden;animation:lblIn .35s ease both}
 .lbl-cell.empty{background:var(--surface)}
 .lbl-stamp{position:absolute;background:repeating-linear-gradient(45deg,#f3f5f8 0 5px,#e7eaf0 5px 10px);border-radius:2px}
+.lbl-stamp-img{position:absolute;image-rendering:pixelated}
 .lbl-addr{position:absolute;color:#111;line-height:1.3;font-family:Helvetica,Arial,sans-serif}
 .lbl-addr div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .lbl-cty{font-weight:700}
-.lbl-count{font-size:.88rem;color:var(--muted);font-weight:500}
-.lbl-missing{margin-top:1rem;font-size:.85rem;color:var(--warning-text);background:var(--warning-bg);padding:.7rem .9rem;border-radius:10px}
+.lbl-count{font-size:.85rem;color:var(--muted);font-weight:500}
 .lbl-hint{font-size:.8rem;color:var(--muted)}
-@media (max-width:900px){.lbl-layout{grid-template-columns:1fr}}
+.lbl-progress{display:flex;align-items:center;gap:.9rem;margin-top:1.1rem;font-size:.82rem;color:var(--muted);white-space:nowrap}
+.lbl-progress-track{flex:1;height:6px;background:var(--surface);border-radius:99px;overflow:hidden}
+.lbl-progress-bar{height:100%;width:0;background:var(--success);border-radius:99px;transition:width .6s cubic-bezier(.2,.8,.2,1)}
+.lbl-toggle{display:flex;align-items:center;gap:8px;font-size:.88rem;cursor:pointer}
+.lbl-stamp-list{display:flex;flex-direction:column;gap:.5rem;margin-top:.9rem}
+.lbl-stamp-item{display:flex;align-items:center;gap:.8rem;padding:.55rem .7rem;background:var(--surface);border-radius:10px;font-size:.82rem;animation:lblIn .3s ease both}
+.lbl-stamp-item img{height:34px;background:#fff;border-radius:3px;padding:2px}
+.lbl-stamp-item div{flex:1;display:flex;flex-direction:column;min-width:0}
+.lbl-stamp-item span{color:var(--muted)}
+.lbl-stamp-item.used{opacity:.55}
+.lbl-tablehead{flex-wrap:wrap}
+.lbl-chips{display:flex;gap:.4rem;flex-wrap:wrap}
+.lbl-chip{border:1px solid var(--line);background:var(--bg);border-radius:99px;padding:.4rem .85rem;font-size:.82rem;color:var(--muted);cursor:pointer;transition:all .2s}
+.lbl-chip b{margin-left:4px;color:var(--ink);font-variant-numeric:tabular-nums}
+.lbl-chip:hover{color:var(--ink)}
+.lbl-chip.active{background:var(--brand-light);color:var(--brand);border-color:transparent}
+.lbl-chip.active b{color:var(--brand)}
+.lbl-search{max-width:240px;height:38px}
+.lbl-tablewrap{overflow:auto;max-height:560px;border-top:1px solid var(--line);margin:0 -1.3rem -1.3rem}
+.lbl-table{width:100%;border-collapse:collapse;font-size:.82rem}
+.lbl-table th{position:sticky;top:0;background:var(--bg);text-align:left;font-size:.7rem;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);padding:.6rem .7rem;border-bottom:1px solid var(--line);z-index:1}
+.lbl-table td{padding:.5rem .7rem;border-bottom:1px solid var(--line);vertical-align:top;white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis}
+.lbl-table tbody tr{animation:lblRow .35s ease both;transition:background .3s}
+.lbl-table tbody tr:hover{background:var(--surface)}
+.lbl-table tr.st-printed td.ed{color:var(--muted)}
+.lbl-table tr.saving{opacity:.5}
+.lbl-table tr.flash{background:var(--brand-light)}
+.lbl-table td.ed{cursor:text;border-radius:4px}
+.lbl-table td.ed:focus{outline:none;background:var(--bg);box-shadow:inset 0 0 0 1.5px var(--brand);white-space:normal;overflow:visible}
+.lbl-table td.bad{background:var(--warning-bg)}
+.lbl-table td.bad:empty::after{content:"fehlt";color:var(--danger);font-style:italic}
+.lbl-status{display:inline-block;padding:.15rem .55rem;border-radius:99px;font-size:.72rem;font-weight:600}
+.lbl-status.st-open{background:var(--surface);color:var(--muted)}
+.lbl-status.st-printed{background:#dcfce7;color:#166534}
+.lbl-status.st-error{background:#fee2e2;color:#b91c1c}
+.lbl-issues{white-space:normal!important}
+.lbl-issues span{display:inline-block;margin:0 4px 2px 0;padding:.1rem .45rem;border-radius:6px;font-size:.72rem}
+.lbl-issues .e{background:#fee2e2;color:#b91c1c}
+.lbl-issues .h{background:var(--warning-bg);color:var(--warning-text)}
+.lbl-check{display:flex;align-items:center;gap:6px;color:var(--muted);cursor:pointer}
+.lbl-empty td{text-align:center;color:var(--muted);padding:2rem}
+@keyframes lblIn{from{opacity:0;transform:scale(.97)}to{opacity:1;transform:none}}
+@keyframes lblRow{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@media (max-width:900px){.lbl-layout{grid-template-columns:1fr}.lbl-search{max-width:none}}
+@media (prefers-reduced-motion:reduce){.lbl-cell,.lbl-table tbody tr,.lbl-stamp-item{animation:none}}
 </style>
 </head>
 <body>
@@ -328,10 +372,10 @@ tr:last-child td{border-bottom:none}
           <div><label class="field-label">Auswahl</label><div class="select" id="lbl-filter"></div></div>
           <div><label class="field-label">Owner</label><div class="select" id="lbl-owner"></div></div>
         </div>
-        <div id="lbl-missing" class="lbl-missing hidden"></div>
+        <div class="lbl-progress"><div class="lbl-progress-track"><div class="lbl-progress-bar" id="lbl-progress-bar"></div></div><span id="lbl-progress-text"></span></div>
       </div>
       <div class="lbl-layout">
-        <div class="card lbl-sheet-card">
+        <div class="card">
           <div class="card-head"><h2>Avery Zweckform 4782 · 97 × 67,7 mm</h2></div>
           <div class="lbl-preview" id="lbl-preview"></div>
         </div>
@@ -349,10 +393,17 @@ tr:last-child td{border-bottom:none}
             </div>
             <div class="row" style="margin-top:1.3rem">
               <button class="btn-secondary" id="lbl-test"><i class="ri-file-paper-line"></i> Testseite</button>
-              <button class="btn-primary" id="lbl-all"><i class="ri-printer-line"></i> Alle drucken</button>
+              <button class="btn-primary" id="lbl-all"><i class="ri-printer-line"></i> Alle offenen drucken</button>
               <button class="btn-ghost" id="lbl-pdf"><i class="ri-download-2-line"></i> PDF</button>
             </div>
             <div id="lbl-result" style="margin-top:1rem"></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h2>Internetmarken</h2><span class="lbl-count" id="lbl-stamps-info"></span></div>
+            <label class="lbl-toggle"><input type="checkbox" id="lbl-usestamps"> Marken aufdrucken</label>
+            <div class="lbl-stamp-list" id="lbl-stamp-list"></div>
+            <button class="btn-secondary btn-sm" id="lbl-stampadd" style="margin-top:.9rem"><i class="ri-add-line"></i> Marke hinzufügen</button>
+            <input type="file" id="lbl-stampfile" accept=".pdf,.png" class="hidden">
           </div>
           <div class="card">
             <div class="card-head"><h2>Excel importieren</h2></div>
@@ -360,10 +411,27 @@ tr:last-child td{border-bottom:none}
             <input class="input" id="lbl-listname" type="text">
             <div class="row" style="margin-top:.9rem">
               <button class="btn-secondary btn-sm" id="lbl-import"><i class="ri-file-excel-2-line"></i> Excel wählen</button>
-              <span class="lbl-hint">Ersetzt die Liste gleichen Namens</span>
+              <span class="lbl-hint">Ersetzt die Liste, Druckstatus bleibt</span>
             </div>
             <input type="file" id="lbl-file" accept=".xlsx,.xls,.csv" class="hidden">
           </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head lbl-tablehead">
+          <div class="lbl-chips">
+            <button class="lbl-chip active" data-status="all">Alle <b>0</b></button>
+            <button class="lbl-chip" data-status="open">Offen <b>0</b></button>
+            <button class="lbl-chip" data-status="printed">Gedruckt <b>0</b></button>
+            <button class="lbl-chip" data-status="error">Fehlerhaft <b>0</b></button>
+          </div>
+          <input class="input lbl-search" id="lbl-search" type="search" placeholder="Suchen">
+        </div>
+        <div class="lbl-tablewrap">
+          <table id="lbl-table" class="lbl-table">
+            <thead><tr><th>Status</th><th>Owner</th><th>Name</th><th>Firma</th><th>Straße</th><th>PLZ Ort</th><th>Land</th><th>Prüfung</th><th>Gedruckt</th></tr></thead>
+            <tbody></tbody>
+          </table>
         </div>
       </div>
     </section>
@@ -468,7 +536,7 @@ tr:last-child td{border-bottom:none}
   </div>
 </div>
 
-<script src="app.js?v=10"></script>
-<script src="labels.js?v=2"></script>
+<script src="app.js?v=11"></script>
+<script src="labels.js?v=4"></script>
 </body>
 </html>
