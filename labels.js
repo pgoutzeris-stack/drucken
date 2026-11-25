@@ -627,11 +627,30 @@
     const printers = api().printers();
     api().makeSelect("lbl-printer", {
       options: printers.map((p) => ({ value: p.id, label: (p.display_name || p.queue) + (p.is_default ? " · Standard" : "") })),
-      value: api().selValue("lbl-printer") || api().defaultPrinterId(),
+      value: api().selValue("lbl-printer") || rememberedPrinter(printers) || api().defaultPrinterId(),
       placeholder: "Kein Drucker gemeldet",
-      onChange: fillSlots,
+      onChange: (v) => {
+        try {
+          window.localStorage.setItem("roots-print-label-printer", String(v));
+        } catch (e) {
+          /* sandboxed iframe: nur für diese Sitzung */
+        }
+        fillSlots();
+      },
     });
     fillSlots();
+  }
+
+  /** Zuletzt gewählter Drucker, sonst ein Canon (Etikettendrucker im Büro). */
+  function rememberedPrinter(printers) {
+    let id = null;
+    try {
+      id = window.localStorage.getItem("roots-print-label-printer");
+    } catch (e) {
+      id = null;
+    }
+    if (id && printers.some((p) => String(p.id) === id)) return id;
+    return printers.find((p) => /canon/i.test(p.display_name || p.queue || ""))?.id || null;
   }
 
   function fillSlots() {
