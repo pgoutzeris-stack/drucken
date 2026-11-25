@@ -175,6 +175,8 @@ window.RootsPrintRelay = (function () {
   const labelStamps = async () => (await labelCall("label_stamps", "print_label_stamps", {}, {}, "stamps")) || [];
   const labelStampAdd = (s) => labelCall("label_stamp_add", "print_label_stamp_add", { p_image: s.image, p_w: s.w, p_h: s.h, p_info: s.info, p_filename: s.filename }, s, "id");
   const labelStampUse = (id, address) => labelCall("label_stamp_use", "print_label_stamp_use", { p_id: id, p_address: address || null }, { id, address: address || null }, "ok");
+  const labelLogAdd = (entries) => labelCall("label_log_add", "print_label_log_add", { p_entries: entries }, { entries }, "count");
+  const labelLog = async (o = {}) => (await labelCall("label_log", "print_label_log", { p_address: o.address || null, p_stamp: o.stamp || null, p_limit: o.limit || 300 }, { address: o.address || null, stamp: o.stamp || null, limit: o.limit || 300 }, "log")) || [];
   const labelStampDelete = (id) => labelCall("label_stamp_delete", "print_label_stamp_delete", { p_id: id }, { id }, "ok");
 
   function blobToBase64(blob) {
@@ -186,5 +188,5 @@ window.RootsPrintRelay = (function () {
     });
   }
 
-  return { use, useBroker, printers, agentList, submitPrint, submitScan, jobs, job, waitFor, pageBlob, registerAgent, labelLists, labelAddresses, labelReplace, labelUpdate, labelMarkPrinted, labelStamps, labelStampAdd, labelStampUse, labelStampDelete, AGENT_STALE_MS };
+  return { use, useBroker, printers, agentList, submitPrint, submitScan, jobs, job, waitFor, pageBlob, registerAgent, labelLists, labelAddresses, labelReplace, labelUpdate, labelMarkPrinted, labelStamps, labelStampAdd, labelStampUse, labelStampDelete, labelLogAdd, labelLog, AGENT_STALE_MS };
 })();

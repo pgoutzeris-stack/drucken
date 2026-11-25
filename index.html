@@ -23,7 +23,7 @@
 </script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.8/dist/umd/supabase.js"></script>
 <script src="config.js"></script>
-<script src="relay.js?v=7"></script>
+<script src="relay.js?v=8"></script>
 <script src="https://pgoutzeris-stack.github.io/ROOTS_Intranet/roots-user-bridge.js?v=20260728-identity-guard-v1"></script>
 <style>
 :root{
@@ -288,6 +288,47 @@ tr:last-child td{border-bottom:none}
 .lbl-more[open]>*:not(summary){animation:lblRow .25s ease both}
 .lbl-more>.grid,.lbl-more>.field-label{margin-top:.9rem}
 .lbl-more .lbl-stamp-list{margin-top:.9rem}
+.lbl-stamps-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:.5rem}
+.lbl-stamp-list{max-height:260px;overflow:auto}
+.lbl-stamp-item{cursor:default;transition:background .2s,opacity .2s}
+.lbl-stamp-item.on{background:var(--brand-light)}
+.lbl-stamp-item.used:not(.on){opacity:.55}
+.lbl-stamp-item.used.on{opacity:1}
+.lbl-stamp-pick input{width:16px;height:16px;cursor:pointer}
+button.lbl-status{border:none;cursor:pointer;font-family:inherit}
+button.lbl-status:hover{filter:brightness(.95)}
+.lbl-drawer{position:fixed;inset:0;z-index:80;background:rgba(15,23,42,0);pointer-events:none;transition:background .25s}
+.lbl-drawer.open{background:rgba(15,23,42,.25);pointer-events:auto}
+.lbl-drawer-panel{position:absolute;top:0;right:0;bottom:0;width:min(440px,100%);background:var(--bg);box-shadow:var(--shadow-lg);padding:1.2rem 1.3rem;overflow:auto;transform:translateX(100%);transition:transform .3s cubic-bezier(.2,.8,.2,1)}
+.lbl-drawer.open .lbl-drawer-panel{transform:none}
+.lbl-drawer-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:.8rem}
+.lbl-drawer-top h2{margin:0}
+.lbl-drawer-stamp{height:56px;margin-bottom:.6rem}
+.lbl-kv{display:flex;gap:.6rem;font-size:.82rem;padding:.3rem 0;align-items:baseline}
+.lbl-kv span{width:90px;flex-shrink:0;color:var(--muted)}
+.lbl-kv code,.lbl-log-row code,.lbl-log-meta code{font-size:.72rem;color:var(--muted);word-break:break-all}
+#lbl-drawer-head{padding-bottom:.8rem;margin-bottom:.8rem;border-bottom:1px solid var(--line)}
+#lbl-drawer-head:empty{display:none}
+.lbl-log-job{padding:.8rem 0;border-bottom:1px solid var(--line);animation:lblRow .3s ease both}
+.lbl-log-head{display:flex;gap:.6rem;align-items:center;font-size:.85rem}
+.lbl-log-head span:last-child{margin-left:auto;color:var(--muted);font-size:.78rem}
+.lbl-log-meta{font-size:.75rem;color:var(--muted);margin:.25rem 0 .5rem}
+.lbl-kind{padding:.12rem .5rem;border-radius:99px;font-size:.7rem;font-weight:600}
+.lbl-kind.k-test{background:var(--surface);color:var(--muted)}
+.lbl-kind.k-print{background:#dcfce7;color:#166534}
+.lbl-kind.k-reprint{background:var(--warning-bg);color:var(--warning-text)}
+.lbl-log-row{display:flex;gap:.7rem;font-size:.8rem;padding:.35rem 0}
+.lbl-log-row>div{display:flex;flex-direction:column;min-width:0}
+.lbl-log-row span{color:var(--muted)}
+.lbl-log-row em{font-style:normal;font-size:.72rem;padding:0 .35rem;border-radius:5px;background:var(--surface)}
+.lbl-log-row em.warn{background:var(--warning-bg);color:var(--warning-text)}
+.lbl-log-pos{font-variant-numeric:tabular-nums;color:var(--muted);width:44px;flex-shrink:0}
+.lbl-dialog{position:fixed;inset:0;z-index:90;background:rgba(15,23,42,.35);display:grid;place-items:center;padding:16px;animation:fadeIn .18s ease}
+.lbl-dialog.out{opacity:0;transition:opacity .18s}
+.lbl-dialog-box{background:var(--bg);border-radius:var(--radius);box-shadow:var(--shadow-lg);padding:1.3rem;width:min(440px,100%)}
+.lbl-dialog-body{font-size:.88rem;line-height:1.5}
+.lbl-dialog-body ul{margin:.4rem 0;padding-left:1.1rem}
+.lbl-dialog-foot{display:flex;justify-content:flex-end;gap:.6rem;margin-top:1rem}
 @keyframes lblIn{from{opacity:0;transform:scale(.97)}to{opacity:1;transform:none}}
 @keyframes lblRow{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 @media (max-width:900px){.lbl-layout{grid-template-columns:1fr}.lbl-search{max-width:none}}
@@ -377,7 +418,15 @@ tr:last-child td{border-bottom:none}
 
     <section data-panel="labels" class="hidden">
       <div class="page-head"><h1>Etiketten</h1>
-        <span class="lbl-count" id="lbl-count"></span>
+        <div class="row"><span class="lbl-count" id="lbl-count"></span>
+        <button class="btn-ghost" id="lbl-log"><i class="ri-history-line"></i> Protokoll</button></div>
+      </div>
+      <div class="lbl-drawer" id="lbl-drawer">
+        <aside class="lbl-drawer-panel">
+          <div class="lbl-drawer-top"><h2 id="lbl-drawer-title">Druckprotokoll</h2><button class="btn-ghost" id="lbl-drawer-close"><i class="ri-close-line"></i></button></div>
+          <div id="lbl-drawer-head"></div>
+          <div id="lbl-drawer-body"></div>
+        </aside>
       </div>
       <div class="card">
         <div class="grid">
@@ -397,7 +446,14 @@ tr:last-child td{border-bottom:none}
             <div><label class="field-label">Drucker</label><div class="select" id="lbl-printer"></div></div>
             <div><label class="field-label">Papierquelle</label><div class="select" id="lbl-slot"></div></div>
           </div>
-          <label class="lbl-toggle"><input type="checkbox" id="lbl-usestamps"> Internetmarken aufdrucken <span class="lbl-count" id="lbl-stamps-info"></span></label>
+          <div class="lbl-stamps">
+            <div class="lbl-stamps-head"><span class="field-label" style="margin:0">Internetmarken</span><span class="lbl-count" id="lbl-stamps-info"></span></div>
+            <div class="lbl-stamp-list" id="lbl-stamp-list"></div>
+            <div class="row" style="margin-top:.6rem">
+              <button class="btn-ghost" id="lbl-stampadd"><i class="ri-add-line"></i> Marke hinzufügen</button>
+            </div>
+            <input type="file" id="lbl-stampfile" accept=".pdf,.png" class="hidden">
+          </div>
           <div class="lbl-actions">
             <button class="btn-primary" id="lbl-all"><i class="ri-printer-line"></i> Alle offenen drucken</button>
             <button class="btn-secondary" id="lbl-test"><i class="ri-file-paper-line"></i> Testseite</button>
@@ -417,12 +473,6 @@ tr:last-child td{border-bottom:none}
             </div>
           </details>
 
-          <details class="lbl-more">
-            <summary><i class="ri-coupon-3-line"></i> Internetmarken verwalten<i class="ri-arrow-down-s-line lbl-caret"></i></summary>
-            <div class="lbl-stamp-list" id="lbl-stamp-list"></div>
-            <button class="btn-secondary btn-sm" id="lbl-stampadd" style="margin-top:.8rem"><i class="ri-add-line"></i> Marke hinzufügen (PDF)</button>
-            <input type="file" id="lbl-stampfile" accept=".pdf,.png" class="hidden">
-          </details>
 
           <details class="lbl-more">
             <summary><i class="ri-file-excel-2-line"></i> Excel importieren<i class="ri-arrow-down-s-line lbl-caret"></i></summary>
@@ -556,6 +606,6 @@ tr:last-child td{border-bottom:none}
 </div>
 
 <script src="app.js?v=11"></script>
-<script src="labels.js?v=9"></script>
+<script src="labels.js?v=10"></script>
 </body>
 </html>
