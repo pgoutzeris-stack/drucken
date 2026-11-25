@@ -362,8 +362,11 @@
     const res = await api().print(pdf.blob, name, { printer, options, copies: "1", result: "#lbl-result", button: test ? "#lbl-test" : "#lbl-all" });
     if (!res?.ok) return;
     try {
-      for (const p of pdf.placed) await relay().labelStampUse(p.stamp, p.address);
-      if (!test) await relay().labelMarkPrinted(rows.map((r) => r.id), res.jobId);
+      // Testseite verbraucht weder Marke noch Adresse.
+      if (!test) {
+        for (const p of pdf.placed) await relay().labelStampUse(p.stamp, p.address);
+        await relay().labelMarkPrinted(rows.map((r) => r.id), res.jobId);
+      }
       await reload();
       if (!test) api().note("#lbl-result", "ok", `${rows.length} Adressen gedruckt und markiert.`);
     } catch (e) {
