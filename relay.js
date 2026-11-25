@@ -149,6 +149,21 @@ window.RootsPrintRelay = (function () {
     return rpc("print_register_agent", { p_name: name, p_token_hash: hash });
   }
 
+  async function labelLists() {
+    if (brokered) return (await broker({ op: "label_lists" })).lists || [];
+    return (await rpc("print_label_lists", {})) || [];
+  }
+
+  async function labelAddresses(list) {
+    if (brokered) return (await broker({ op: "label_addresses", list })).rows || [];
+    return (await rpc("print_label_addresses", { p_list: list })) || [];
+  }
+
+  async function labelReplace(list, rows) {
+    if (brokered) return (await broker({ op: "label_replace", list, rows })).count;
+    return rpc("print_label_replace", { p_list: list, p_rows: rows });
+  }
+
   function blobToBase64(blob) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -158,5 +173,5 @@ window.RootsPrintRelay = (function () {
     });
   }
 
-  return { use, useBroker, printers, agentList, submitPrint, submitScan, jobs, job, waitFor, pageBlob, registerAgent, AGENT_STALE_MS };
+  return { use, useBroker, printers, agentList, submitPrint, submitScan, jobs, job, waitFor, pageBlob, registerAgent, labelLists, labelAddresses, labelReplace, AGENT_STALE_MS };
 })();

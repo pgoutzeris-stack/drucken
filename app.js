@@ -371,7 +371,7 @@
     );
   }
 
-  function chosenOptions() {
+  function chosenPrintOptions() {
     const out = {};
     for (const [id, entry] of selects) {
       if (id.startsWith("opt-")) out[id.slice(4)] = entry.value;
@@ -379,29 +379,31 @@
     return out;
   }
 
-  async function doPrint(file, filename) {
-    const printer = currentPrinter();
-    if (!printer) return note("#print-result", "err", "Kein Drucker gewählt.");
-    const copies = $("#print-copies").value || "1";
-    const btn = $("#print-go");
+  async function doPrint(file, filename, o = {}) {
+    const printer = o.printer || currentPrinter();
+    const out = o.result || "#print-result";
+    if (!printer) return note(out, "err", "Kein Drucker gewählt.");
+    const copies = o.copies || $("#print-copies").value || "1";
+    const btn = $(o.button || "#print-go");
+    const chosenOptions = () => o.options || chosenPrintOptions();
     btn.disabled = true;
-    note("#print-result", "info", "Auftrag wird übergeben…");
+    note(out, "info", "Auftrag wird übergeben…");
     try {
       if (state.active === "bridge") {
         const qs = new URLSearchParams({ queue: printer.queue, copies, options: JSON.stringify(chosenOptions()) });
         const res = await call("/api/print?" + qs, { method: "POST", body: file, headers: { "Content-Type": "application/octet-stream", "X-Roots-Filename": filename.replace(/[^\x20-\x7e]/g, "_") } });
-        note("#print-result", "ok", `An ${printer.queue} übergeben.`, res.jobId ? `Auftrag <code>${esc(res.jobId)}</code>` : null);
+        note(out, "ok", `An ${printer.queue} übergeben.`, res.jobId ? `Auftrag <code>${esc(res.jobId)}</code>` : null);
       } else {
         const jobId = await relay().submitPrint(printer.id, file, filename, { copies: Number(copies), options: chosenOptions() });
-        note("#print-result", "info", "In der Warteschlange. Der Agent übernimmt.");
+        note(out, "info", "In der Warteschlange. Der Agent übernimmt.");
         const done = await relay().waitFor(jobId, null, { timeoutMs: 180000 });
         if (done.status === "error") throw done.error || { message: "Der Auftrag ist fehlgeschlagen." };
-        note("#print-result", "ok", `An ${printer.display_name || printer.queue} gedruckt.`, done.result?.jobId ? `Auftrag <code>${esc(done.result.jobId)}</code>` : null);
+        note(out, "ok", `An ${printer.display_name || printer.queue} gedruckt.`, done.result?.jobId ? `Auftrag <code>${esc(done.result.jobId)}</code>` : null);
       }
       toast("Druckauftrag übergeben", "ok");
       loadJobs();
     } catch (e) {
-      fail("#print-result", e);
+      fail(out, e);
       toast(e.message || "Druck fehlgeschlagen", "err");
     } finally {
       btn.disabled = false;
@@ -935,6 +937,7 @@
       state.ssid = await call("/api/diagnose?passive=1", { timeout: 30000 }).then((d) => d.ssid).catch(() => null);
     }
     await loadPrinters();
+    window.ROOTS_LABELS && window.ROOTS_LABELS.probe();
     loadJobs();
     loadStatus();
   }
@@ -945,7 +948,7 @@
     await bootApp();
   }
 
-  const VIEW_TITLE = { print: "Drucken", scan: "Scannen", jobs: "Aufträge", status: "Status" };
+  const VIEW_TITLE = { print: "Drucken", labels: "Etiketten", scan: "Scannen", jobs: "Aufträge", status: "Status" };
 
   function switchView(view) {
     $$(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
@@ -954,6 +957,7 @@
     if (view === "jobs") loadJobs();
     if (view === "status") loadStatus();
     if (view === "scan" && !state.caps) fillScanners();
+    if (view === "labels") window.ROOTS_LABELS && window.ROOTS_LABELS.open();
   }
 
   function pickFile(file) {
@@ -1068,4 +1072,12 @@
     wire();
     bootAuth().catch(() => note("#gate-msg", "err", "Supabase ist nicht erreichbar.", "Netzverbindung prüfen und Seite neu laden."));
   });
+  window.ROOTS_PRINT_API = {
+    printers: () => state.printers,
+    defaultPrinterId: () => (state.printers.find((p) => p.is_default) || state.printers[0])?.id,
+    print: (file, filename, o) => doPrint(file, filename, o),
+    makeSelect,
+    selValue,
+    note,
+  };
 })();
