@@ -275,6 +275,19 @@ tr:last-child td{border-bottom:none}
 .lbl-issues .h{background:var(--warning-bg);color:var(--warning-text)}
 .lbl-check{display:flex;align-items:center;gap:6px;color:var(--muted);cursor:pointer}
 .lbl-empty td{text-align:center;color:var(--muted);padding:2rem}
+.lbl-side{display:flex;flex-direction:column;gap:1rem}
+.lbl-actions{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap}
+.lbl-actions .btn-primary{flex:1;justify-content:center}
+.lbl-toggle .lbl-count{margin-left:auto}
+.lbl-more{border-top:1px solid var(--line);padding-top:.9rem}
+.lbl-more summary{list-style:none;display:flex;align-items:center;gap:8px;cursor:pointer;font-size:.88rem;font-weight:600;color:var(--ink)}
+.lbl-more summary::-webkit-details-marker{display:none}
+.lbl-more summary i:first-child{color:var(--muted)}
+.lbl-caret{margin-left:auto;color:var(--muted);transition:transform .2s}
+.lbl-more[open] .lbl-caret{transform:rotate(180deg)}
+.lbl-more[open]>*:not(summary){animation:lblRow .25s ease both}
+.lbl-more>.grid,.lbl-more>.field-label{margin-top:.9rem}
+.lbl-more .lbl-stamp-list{margin-top:.9rem}
 @keyframes lblIn{from{opacity:0;transform:scale(.97)}to{opacity:1;transform:none}}
 @keyframes lblRow{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 @media (max-width:900px){.lbl-layout{grid-template-columns:1fr}.lbl-search{max-width:none}}
@@ -376,14 +389,25 @@ tr:last-child td{border-bottom:none}
       </div>
       <div class="lbl-layout">
         <div class="card">
-          <div class="card-head"><h2>Avery Zweckform 4782 · 97 × 67,7 mm</h2></div>
+          <div class="card-head"><h2>Nächster Bogen</h2><span class="lbl-count">Avery 4782</span></div>
           <div class="lbl-preview" id="lbl-preview"></div>
         </div>
-        <div>
-          <div class="card">
+        <div class="card lbl-side">
+          <div class="grid lbl-grid">
+            <div><label class="field-label">Drucker</label><div class="select" id="lbl-printer"></div></div>
+            <div><label class="field-label">Papierquelle</label><div class="select" id="lbl-slot"></div></div>
+          </div>
+          <label class="lbl-toggle"><input type="checkbox" id="lbl-usestamps"> Internetmarken aufdrucken <span class="lbl-count" id="lbl-stamps-info"></span></label>
+          <div class="lbl-actions">
+            <button class="btn-primary" id="lbl-all"><i class="ri-printer-line"></i> Alle offenen drucken</button>
+            <button class="btn-secondary" id="lbl-test"><i class="ri-file-paper-line"></i> Testseite</button>
+            <button class="btn-ghost" id="lbl-pdf" title="PDF herunterladen"><i class="ri-download-2-line"></i></button>
+          </div>
+          <div id="lbl-result"></div>
+
+          <details class="lbl-more">
+            <summary><i class="ri-equalizer-line"></i> Druckeinstellungen<i class="ri-arrow-down-s-line lbl-caret"></i></summary>
             <div class="grid lbl-grid">
-              <div><label class="field-label">Drucker</label><div class="select" id="lbl-printer"></div></div>
-              <div><label class="field-label">Papierquelle</label><div class="select" id="lbl-slot"></div></div>
               <div><label class="field-label" for="lbl-start">Erstes freies Etikett</label><input class="input" id="lbl-start" type="number" min="1" max="8" value="1"></div>
               <div><label class="field-label" for="lbl-fs">Schrift pt</label><input class="input" id="lbl-fs" type="number" min="7" max="14" step="0.5" value="10.5"></div>
               <div><label class="field-label" for="lbl-dx">Versatz X mm</label><input class="input" id="lbl-dx" type="number" step="0.5" value="0"></div>
@@ -391,30 +415,25 @@ tr:last-child td{border-bottom:none}
               <div><label class="field-label" for="lbl-sw">Frankierfeld Breite mm</label><input class="input" id="lbl-sw" type="number" min="0" max="80" value="50"></div>
               <div><label class="field-label" for="lbl-sh">Frankierfeld Höhe mm</label><input class="input" id="lbl-sh" type="number" min="0" max="50" value="30"></div>
             </div>
-            <div class="row" style="margin-top:1.3rem">
-              <button class="btn-secondary" id="lbl-test"><i class="ri-file-paper-line"></i> Testseite</button>
-              <button class="btn-primary" id="lbl-all"><i class="ri-printer-line"></i> Alle offenen drucken</button>
-              <button class="btn-ghost" id="lbl-pdf"><i class="ri-download-2-line"></i> PDF</button>
-            </div>
-            <div id="lbl-result" style="margin-top:1rem"></div>
-          </div>
-          <div class="card">
-            <div class="card-head"><h2>Internetmarken</h2><span class="lbl-count" id="lbl-stamps-info"></span></div>
-            <label class="lbl-toggle"><input type="checkbox" id="lbl-usestamps"> Marken aufdrucken</label>
+          </details>
+
+          <details class="lbl-more">
+            <summary><i class="ri-coupon-3-line"></i> Internetmarken verwalten<i class="ri-arrow-down-s-line lbl-caret"></i></summary>
             <div class="lbl-stamp-list" id="lbl-stamp-list"></div>
-            <button class="btn-secondary btn-sm" id="lbl-stampadd" style="margin-top:.9rem"><i class="ri-add-line"></i> Marke hinzufügen</button>
+            <button class="btn-secondary btn-sm" id="lbl-stampadd" style="margin-top:.8rem"><i class="ri-add-line"></i> Marke hinzufügen (PDF)</button>
             <input type="file" id="lbl-stampfile" accept=".pdf,.png" class="hidden">
-          </div>
-          <div class="card">
-            <div class="card-head"><h2>Excel importieren</h2></div>
+          </details>
+
+          <details class="lbl-more">
+            <summary><i class="ri-file-excel-2-line"></i> Excel importieren<i class="ri-arrow-down-s-line lbl-caret"></i></summary>
             <label class="field-label" for="lbl-listname">Name der Liste</label>
             <input class="input" id="lbl-listname" type="text">
-            <div class="row" style="margin-top:.9rem">
-              <button class="btn-secondary btn-sm" id="lbl-import"><i class="ri-file-excel-2-line"></i> Excel wählen</button>
+            <div class="row" style="margin-top:.8rem">
+              <button class="btn-secondary btn-sm" id="lbl-import"><i class="ri-upload-2-line"></i> Excel wählen</button>
               <span class="lbl-hint">Ersetzt die Liste, Druckstatus bleibt</span>
             </div>
             <input type="file" id="lbl-file" accept=".xlsx,.xls,.csv" class="hidden">
-          </div>
+          </details>
         </div>
       </div>
       <div class="card">
@@ -537,6 +556,6 @@ tr:last-child td{border-bottom:none}
 </div>
 
 <script src="app.js?v=11"></script>
-<script src="labels.js?v=5"></script>
+<script src="labels.js?v=6"></script>
 </body>
 </html>
