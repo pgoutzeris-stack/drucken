@@ -602,7 +602,13 @@
   }
 
   async function reload() {
-    const [rows, stamps] = await Promise.all([st.list ? relay().labelAddresses(st.list) : [], relay().labelStamps()]);
+    const [rows, stamps] = await Promise.all([
+      st.list ? relay().labelAddresses(st.list) : [],
+      relay().labelStamps().catch((e) => {
+        api().note("#lbl-result", "err", e.message || "Marken konnten nicht geladen werden.", e.hint || null);
+        return [];
+      }),
+    ]);
     st.rows = rows;
     st.stamps = stamps;
     const owners = [...new Set(st.rows.map((r) => r.owner).filter(Boolean))].sort();

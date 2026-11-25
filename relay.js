@@ -47,6 +47,8 @@ window.RootsPrintRelay = (function () {
     if (/Kein ROOTS-Profil/i.test(raw)) return fail("Dieses Konto hat kein Profil im Intranet.", "Ein Admin muss das Konto im Intranet anlegen.");
     if (/Drucker unbekannt|Scanner unbekannt/i.test(raw)) return fail("Dieser Drucker ist nicht mehr gemeldet.", "Liste neu laden. Läuft der Agent im Büro noch?");
     if (/groesser als|größer als/i.test(raw)) return fail("Die Datei ist größer als 25 MB.", "Über den Relay sind 25 MB die Grenze. Größere Dateien direkt am Helfer drucken.");
+    if (/Unbekannte Print-Anfrage/i.test(raw)) return fail("Das Intranet läuft noch mit einer älteren Version.", "Intranet-Tab neu laden (Cmd+Shift+R), danach Drucken erneut öffnen.");
+    if (/Kein Zugriff auf Etiketten/i.test(raw)) return fail("Dieses Konto hat keinen Zugriff auf Etiketten.");
     if (/Nur Admins/i.test(raw)) return fail("Nur Admins dürfen Agenten freischalten.");
     if (/Bruecke ist nicht geladen|Brücke ist nicht geladen/i.test(raw)) return fail("Die Intranet-Brücke ist nicht geladen.", "Seite im Intranet neu laden.");
     if (/zu lange gedauert/i.test(raw)) return fail("Das Intranet hat nicht rechtzeitig geantwortet.", "Erneut versuchen. Bei Scans mit vielen Seiten kann es dauern.");
