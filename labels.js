@@ -142,7 +142,8 @@
 
   function inScope(r) {
     const s = settings();
-    return (s.filter === "all" || r[s.filter]) && (!s.owner || r.owner === s.owner);
+    const f = s.filter === "maxi" || s.filter === "box" ? r.ship === s.filter : s.filter === "all" || r[s.filter];
+    return f && (!s.owner || r.owner === s.owner);
   }
 
   /** Was "Alle drucken" drucken würde. */
@@ -201,12 +202,14 @@
     { key: "city", label: "PLZ Ort" },
     { key: "country", label: "Land", w: "120px" },
   ];
+  const SHIP_LABEL = { maxi: "Maxibrief", box: "Karton" };
+  const grpName = (g) => String(g || "").toLowerCase().replace(/(^|[\s/])\S/g, (m) => m.toUpperCase());
   const STATUS_LABEL = { open: "Offen", printed: "Gedruckt", error: "Fehlerhaft" };
 
   function renderTable() {
     const q = st.q.trim().toLowerCase();
     const rows = st.rows.filter(
-      (r) => inScope(r) && (st.status === "all" || r._status === st.status) && (!q || COLS.some((c) => String(r[c.key] || "").toLowerCase().includes(q)))
+      (r) => inScope(r) && (st.status === "all" || r._status === st.status) && (!q || COLS.some((c) => String(r[c.key] || "").toLowerCase().includes(q)) || String(r.grp || "").toLowerCase().includes(q))
     );
     const body = $("#lbl-table tbody");
     body.innerHTML = rows.length
@@ -217,6 +220,7 @@
             return (
               `<tr data-id="${esc(r.id)}" class="st-${r._status}" style="animation-delay:${Math.min(i, 30) * 14}ms">` +
               `<td><button class="lbl-status st-${r._status}" data-info title="Verlauf">${STATUS_LABEL[r._status]}</button></td>` +
+              `<td class="lbl-grp">${esc(grpName(r.grp))}${r.ship ? `<span class="ship-${r.ship}">${SHIP_LABEL[r.ship]}</span>` : ""}</td>` +
               COLS.map((c) => {
                 const bad = (c.key === "street" && r._errors.includes("Straße fehlt")) || (c.key === "city" && r._errors.some((e) => /PLZ/.test(e)));
                 return `<td class="ed${bad ? " bad" : ""}" data-k="${c.key}" contenteditable="plaintext-only" spellcheck="false">${esc(r[c.key] || "")}</td>`;
@@ -227,7 +231,7 @@
             );
           })
           .join("")
-      : `<tr class="lbl-empty"><td colspan="${COLS.length + 3}">Keine Einträge</td></tr>`;
+      : `<tr class="lbl-empty"><td colspan="${COLS.length + 4}">Keine Einträge</td></tr>`;
   }
 
   function renderInfo() {
@@ -663,7 +667,20 @@
       const col = (re) => head.findIndex((h) => re.test(h));
       const C = { owner: col(/^owner$/), name: col(/^name$/), company: col(/^company|firma/), kalender: col(/^kalender|^box$/), karte: col(/^karte$/), street: col(/stra(ß|ss)e/), city: col(/^stadt|^ort/), country: col(/^land/), kind: col(/privat/) };
       const val = (r, k) => (C[k] >= 0 && r[C[k]] != null ? String(r[C[k]]).trim() : "");
-      const rows = grid.slice(hi + 1).filter((r) => r && val(r, "name")).map((r) => ({
+      // Abschnittszeilen (Wert in Spalte A, kein Name) setzen die Gruppe der folgenden Kontakte
+      let grp = "";
+      const seen = {};
+      const rows = grid.slice(hi + 1).filter((r) => {
+        if (!r) return false;
+        if (!val(r, "name") && r[0] != null && String(r[0]).trim()) {
+          const g = String(r[0]).trim();
+          seen[g] = (seen[g] || 0) + 1;
+          grp = seen[g] > 1 ? `${g} ${seen[g]}` : g;
+        }
+        if (val(r, "name")) r._grp = grp;
+        return !!val(r, "name");
+      }).map((r) => ({
+        grp: r._grp,
         owner: val(r, "owner"), name: val(r, "name"), company: val(r, "company"), street: val(r, "street"), city: val(r, "city"),
         country: val(r, "country"), kind: val(r, "kind"), kalender: !!val(r, "kalender") && val(r, "kalender") !== "0", karte: !!val(r, "karte") && val(r, "karte") !== "0",
       }));
@@ -818,8 +835,14 @@
     if (wired) return;
     wired = true;
     api().makeSelect("lbl-filter", {
-      options: [{ value: "all", label: "Alle" }, { value: "kalender", label: "Nur Kalender" }, { value: "karte", label: "Nur Karte" }],
-      value: "all",
+      options: [
+        { value: "maxi", label: "Maxibrief" },
+        { value: "box", label: "Karton" },
+        { value: "all", label: "Alle" },
+        { value: "kalender", label: "Nur Kalender" },
+        { value: "karte", label: "Nur Karte" },
+      ],
+      value: "maxi",
       onChange: renderAll,
     });
     ["#lbl-start", "#lbl-fs", "#lbl-dx", "#lbl-dy", "#lbl-sw", "#lbl-sh"].forEach((id) => $(id).addEventListener("input", renderAll));

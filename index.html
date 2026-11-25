@@ -270,6 +270,10 @@ tr:last-child td{border-bottom:none}
 .lbl-status.st-printed{background:#dcfce7;color:#166534}
 .lbl-status.st-error{background:#fee2e2;color:#b91c1c}
 .lbl-issues{white-space:normal!important}
+.lbl-grp{white-space:nowrap;font-size:.8rem}
+.lbl-grp span{display:block;width:max-content;margin-top:2px;padding:.05rem .4rem;border-radius:6px;font-size:.7rem}
+.lbl-grp .ship-maxi{background:var(--brand-light,#e8f0ff);color:var(--brand,#206efb)}
+.lbl-grp .ship-box{background:#fef3c7;color:#92400e}
 .lbl-issues span{display:inline-block;margin:0 4px 2px 0;padding:.1rem .45rem;border-radius:6px;font-size:.72rem}
 .lbl-issues .e{background:#fee2e2;color:#b91c1c}
 .lbl-issues .h{background:var(--warning-bg);color:var(--warning-text)}
@@ -514,7 +518,7 @@ button.lbl-status:hover{filter:brightness(.95)}
         </div>
         <div class="lbl-tablewrap">
           <table id="lbl-table" class="lbl-table">
-            <thead><tr><th>Status</th><th>Owner</th><th>Name</th><th>Firma</th><th>Straße</th><th>PLZ Ort</th><th>Land</th><th>Prüfung</th><th>Gedruckt</th></tr></thead>
+            <thead><tr><th>Status</th><th>Gruppe</th><th>Owner</th><th>Name</th><th>Firma</th><th>Straße</th><th>PLZ Ort</th><th>Land</th><th>Prüfung</th><th>Gedruckt</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -642,7 +646,7 @@ button.lbl-status:hover{filter:brightness(.95)}
 </div>
 
 <script src="app.js?v=12"></script>
-<script src="labels.js?v=11"></script>
+<script src="labels.js?v=12"></script>
 <script src="device.js?v=1"></script>
 </body>
 </html>
