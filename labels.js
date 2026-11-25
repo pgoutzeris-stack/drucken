@@ -345,6 +345,8 @@
     const printerId = api().selValue("lbl-printer");
     const printer = api().printers().find((p) => String(p.id) === String(printerId));
     if (!printer) return api().note("#lbl-result", "err", "Kein Drucker gewählt.");
+    // Offline würde der Auftrag warten und später ohne Statusvermerk gedruckt (Marke doppelt verwendbar).
+    if (printer.agentOnline === false) return api().note("#lbl-result", "err", "Der Druck-Agent ist offline.", "Auf dem Mac mit dem Drucker muss der Agent laufen. Status-Seite prüfen.");
     const rows = test ? testRows() : printable();
     if (!rows.length) return api().note("#lbl-result", "err", "Keine Adressen zum Drucken.");
     let pdf;
