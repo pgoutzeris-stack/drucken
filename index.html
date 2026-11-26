@@ -269,6 +269,16 @@ tr:last-child td{border-bottom:none}
 .lbl-status.st-open{background:var(--surface);color:var(--muted)}
 .lbl-status.st-printed{background:#dcfce7;color:#166534}
 .lbl-status.st-error{background:#fee2e2;color:#b91c1c}
+.lbl-plan{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:.75rem}
+.lbl-pl{background:var(--surface-2,#f6f7f9);border-radius:10px;padding:.8rem .9rem;cursor:pointer;transition:background .15s}
+.lbl-pl:hover{background:var(--brand-light,#e8f0ff)}
+.lbl-pl h3{margin:0 0 .15rem;font-size:.9rem;display:flex;justify-content:space-between;gap:.5rem}
+.lbl-pl h3 b{font-size:1.25rem}
+.lbl-pl .k{font-size:.75rem;color:var(--muted)}
+.lbl-pl ul{margin:.45rem 0 0;padding:0;list-style:none;font-size:.78rem}
+.lbl-pl li{display:flex;justify-content:space-between;gap:.5rem;padding:.12rem 0;border-top:1px solid var(--border,#e5e7eb)}
+.lbl-pl li span:last-child{color:var(--muted);text-align:right}
+.lbl-grp .ship-intl{background:#ede9fe;color:#5b21b6}
 .lbl-issues{white-space:normal!important}
 .lbl-grp{white-space:nowrap;font-size:.8rem}
 .lbl-grp span{display:block;width:max-content;margin-top:2px;padding:.05rem .4rem;border-radius:6px;font-size:.7rem}
@@ -507,6 +517,10 @@ button.lbl-status:hover{filter:brightness(.95)}
         </div>
       </div>
       <div class="card">
+        <div class="card-head"><h2>Versandplan</h2><span class="lbl-count" id="lbl-plan-sum"></span></div>
+        <div class="lbl-plan" id="lbl-plan"></div>
+      </div>
+      <div class="card">
         <div class="card-head lbl-tablehead">
           <div class="lbl-chips">
             <button class="lbl-chip active" data-status="all">Alle <b>0</b></button>
@@ -646,7 +660,7 @@ button.lbl-status:hover{filter:brightness(.95)}
 </div>
 
 <script src="app.js?v=12"></script>
-<script src="labels.js?v=12"></script>
+<script src="labels.js?v=13"></script>
 <script src="device.js?v=1"></script>
 </body>
 </html>

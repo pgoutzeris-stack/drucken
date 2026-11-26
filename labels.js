@@ -142,7 +142,7 @@
 
   function inScope(r) {
     const s = settings();
-    const f = s.filter === "maxi" || s.filter === "box" ? r.ship === s.filter : s.filter === "all" || r[s.filter];
+    const f = s.filter === "maxi" || s.filter === "box" || s.filter === "intl" ? r.ship === s.filter : s.filter === "all" || r[s.filter];
     return f && (!s.owner || r.owner === s.owner);
   }
 
@@ -166,6 +166,50 @@
     renderCounts();
     renderTable();
     renderInfo();
+    renderPlan();
+  }
+
+  /** Karton: Kalender 34,3 x 24 x 1 cm flach gestapelt, rundum Polster. */
+  const CAL = { l: 34.3, w: 24, h: 1 };
+  function boxSize(n) {
+    const inner = { l: Math.ceil(CAL.l + 1), w: Math.ceil(CAL.w + 1), h: Math.ceil(n * CAL.h + 2) };
+    const fits = inner.l <= 44 && inner.w <= 34 && inner.h <= 19;
+    return { inner, pack: fits ? "DHL Packset L (45 × 35 × 20 cm)" : "größerer Karton nötig" };
+  }
+
+  function renderPlan() {
+    const el = $("#lbl-plan");
+    if (!el) return;
+    const by = (ship) => st.rows.filter((r) => r.ship === ship);
+    const groups = (rows) => {
+      const m = new Map();
+      rows.forEach((r) => m.set(r.grp || "Ohne Gruppe", (m.get(r.grp || "Ohne Gruppe") || []).concat(r)));
+      return [...m];
+    };
+    const lands = (rows) => [...new Set(rows.map((r) => country(r.country) || "ohne Land"))].join(", ");
+    const box = groups(by("box"));
+    const maxi = by("maxi");
+    const intl = by("intl");
+    const card = (filter, title, n, unit, body) =>
+      `<div class="lbl-pl" data-filter="${filter}"><h3>${title}<b>${n}</b></h3><div class="k">${unit}</div>${body}</div>`;
+    el.innerHTML =
+      box.map(([g, rows]) => {
+        const b = boxSize(rows.length);
+        return card("box", "Karton " + esc(grpName(g)), 1, `${rows.length} Kalender · innen mind. ${b.inner.l} × ${b.inner.w} × ${b.inner.h} cm`,
+          `<ul><li><span>Karton</span><span>${esc(b.pack)}</span></li><li><span>Länder</span><span>${esc(lands(rows))}</span></li></ul>`);
+      }).join("") +
+      card("maxi", "Maxibrief", maxi.length, `Maxibrief-Karton 345 × 245 mm innen · ${maxi.filter((r) => r.printed_at).length} Etiketten gedruckt`,
+        `<ul>${groups(maxi).map(([g, rows]) => `<li><span>${esc(grpName(g))}</span><span>${rows.length}</span></li>`).join("")}</ul>`) +
+      card("intl", "Ausland einzeln", intl.length, "Maxibrief-Karton · Marke Großbrief International fehlt",
+        `<ul>${intl.map((r) => `<li><span>${esc(r.name)}</span><span>${esc(country(r.country))}</span></li>`).join("")}</ul>`);
+    $("#lbl-plan-sum").textContent = `${box.length} große · ${maxi.length + intl.length} kleine Kartons`;
+    el.querySelectorAll(".lbl-pl").forEach((c) =>
+      c.addEventListener("click", () => {
+        api().makeSelect("lbl-filter", { options: FILTERS, value: c.dataset.filter });
+        renderAll();
+        $("#lbl-table").scrollIntoView({ behavior: "smooth", block: "start" });
+      })
+    );
   }
 
   function animateNumber(el, to) {
@@ -202,7 +246,15 @@
     { key: "city", label: "PLZ Ort" },
     { key: "country", label: "Land", w: "120px" },
   ];
-  const SHIP_LABEL = { maxi: "Maxibrief", box: "Karton" };
+  const FILTERS = [
+    { value: "maxi", label: "Maxibrief" },
+    { value: "box", label: "Karton" },
+    { value: "intl", label: "Ausland" },
+    { value: "all", label: "Alle" },
+    { value: "kalender", label: "Nur Kalender" },
+    { value: "karte", label: "Nur Karte" },
+  ];
+  const SHIP_LABEL = { maxi: "Maxibrief", box: "Karton", intl: "Ausland" };
   const grpName = (g) => String(g || "").toLowerCase().replace(/(^|[\s/])\S/g, (m) => m.toUpperCase());
   const STATUS_LABEL = { open: "Offen", printed: "Gedruckt", error: "Fehlerhaft" };
 
@@ -834,17 +886,7 @@
   function wire() {
     if (wired) return;
     wired = true;
-    api().makeSelect("lbl-filter", {
-      options: [
-        { value: "maxi", label: "Maxibrief" },
-        { value: "box", label: "Karton" },
-        { value: "all", label: "Alle" },
-        { value: "kalender", label: "Nur Kalender" },
-        { value: "karte", label: "Nur Karte" },
-      ],
-      value: "maxi",
-      onChange: renderAll,
-    });
+    api().makeSelect("lbl-filter", { options: FILTERS, value: "maxi", onChange: renderAll });
     ["#lbl-start", "#lbl-fs", "#lbl-dx", "#lbl-dy", "#lbl-sw", "#lbl-sh"].forEach((id) => $(id).addEventListener("input", renderAll));
     $("#lbl-test").addEventListener("click", () => print("test"));
     $("#lbl-all").addEventListener("click", () => print("print"));
