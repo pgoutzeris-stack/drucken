@@ -35,6 +35,7 @@
     belgium: "BELGIEN", belgien: "BELGIEN",
     "the netherlands": "NIEDERLANDE", netherlands: "NIEDERLANDE", niederlande: "NIEDERLANDE",
     frankreich: "FRANKREICH", france: "FRANKREICH",
+    "vereinigte arabische emirate": "UNITED ARAB EMIRATES", vae: "UNITED ARAB EMIRATES", uae: "UNITED ARAB EMIRATES", "united arab emirates": "UNITED ARAB EMIRATES",
     tschechien: "TSCHECHIEN", "czech republic": "TSCHECHIEN",
     schweiz: "SCHWEIZ", switzerland: "SCHWEIZ", "österreich": "ÖSTERREICH", austria: "ÖSTERREICH",
   };
@@ -200,8 +201,8 @@
       }).join("") +
       card("maxi", "Maxibrief", maxi.length, `Maxibrief-Karton 345 × 245 mm innen · ${maxi.filter((r) => r.printed_at).length} Etiketten gedruckt`,
         `<ul>${groups(maxi).map(([g, rows]) => `<li><span>${esc(grpName(g))}</span><span>${rows.length}</span></li>`).join("")}</ul>`) +
-      card("intl", "Ausland einzeln", intl.length, "Maxibrief-Karton · Marke Großbrief International fehlt",
-        `<ul>${intl.map((r) => `<li><span>${esc(r.name)}</span><span>${esc(country(r.country))}</span></li>`).join("")}</ul>`);
+      card("intl", "Ausland einzeln", intl.length, "Marke International fehlt noch",
+        `<ul>${intl.map((r) => `<li><span>${esc(r.name)}${r.kalender ? "" : " (Karte)"}</span><span>${esc(country(r.country))}</span></li>`).join("")}</ul>`);
     $("#lbl-plan-sum").textContent = `${box.length} große · ${maxi.length + intl.length} kleine Kartons`;
     el.querySelectorAll(".lbl-pl").forEach((c) =>
       c.addEventListener("click", () => {
@@ -277,7 +278,7 @@
                 const bad = (c.key === "street" && r._errors.includes("Straße fehlt")) || (c.key === "city" && r._errors.some((e) => /PLZ/.test(e)));
                 return `<td class="ed${bad ? " bad" : ""}" data-k="${c.key}" contenteditable="plaintext-only" spellcheck="false">${esc(r[c.key] || "")}</td>`;
               }).join("") +
-              `<td class="lbl-issues">${issues.map((t, k) => `<span class="${k < r._errors.length ? "e" : "h"}">${esc(t)}</span>`).join("")}</td>` +
+              `<td class="lbl-issues">${r.note ? `<span class="n">${esc(r.note)}</span>` : ""}${issues.map((t, k) => `<span class="${k < r._errors.length ? "e" : "h"}">${esc(t)}</span>`).join("")}</td>` +
               `<td class="lbl-printed"><label class="lbl-check"><input type="checkbox" ${r.printed_at ? "checked" : ""} ${r._errors.length && !r.printed_at ? "disabled" : ""}><span>${date}</span></label></td>` +
               `</tr>`
             );
