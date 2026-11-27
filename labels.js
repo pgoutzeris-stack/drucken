@@ -197,7 +197,7 @@
       box.map(([g, rows]) => {
         const b = boxSize(rows.length);
         return card("box", "Karton " + esc(grpName(g)), 1, `${rows.length} Kalender · innen mind. ${b.inner.l} × ${b.inner.w} × ${b.inner.h} cm`,
-          `<ul><li><span>Karton</span><span>${esc(b.pack)}</span></li><li><span>Länder</span><span>${esc(lands(rows))}</span></li></ul>`);
+          `<ul><li><span>Empfänger</span><span>${esc(rows.find((r) => r.box_recipient)?.name || "offen")}</span></li><li><span>Karton</span><span>${esc(b.pack)}</span></li><li><span>Länder</span><span>${esc(lands(rows))}</span></li></ul>`);
       }).join("") +
       card("maxi", "Maxibrief", maxi.length, `Maxibrief-Karton 345 × 245 mm innen · ${maxi.filter((r) => r.printed_at).length} Etiketten gedruckt`,
         `<ul>${groups(maxi).map(([g, rows]) => `<li><span>${esc(grpName(g))}</span><span>${rows.length}</span></li>`).join("")}</ul>`) +
